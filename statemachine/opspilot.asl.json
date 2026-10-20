@@ -1,36 +1,382 @@
 {
-  "Comment": "OpsPilot incident pipeline (contract). ${...} are substituted by CDK at deploy time.",
+  "Comment": "OpsPilot incident pipeline. Invariant: every execution ends in Notify (or NotifyFailed if Notify itself cannot run). Placeholders are substituted by infra/pipeline_stack.py.",
   "StartAt": "CollectContext",
   "States": {
-    "CollectContext": {"Type": "Task", "Resource": "${CollectContextFnArn}", "ResultPath": "$.context",
-      "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 2, "BackoffRate": 2}], "Next": "RunRCA"},
-    "RunRCA": {"Type": "Task", "Resource": "${RunRcaFnArn}", "ResultPath": "$.rca",
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "CreateTicket"}], "Next": "CreateTicket"},
-    "CreateTicket": {"Type": "Task", "Resource": "${CreateTicketFnArn}", "ResultPath": "$.ticket", "Next": "Route"},
-    "Route": {"Type": "Choice",
-      "Choices": [
-        {"And": [
-          {"Variable": "$.rca.classification", "StringMatches": "code_defect"},
-          {"Variable": "$.rca.confidence", "NumericGreaterThanEquals": 0.6}], "Next": "ProposeFix"},
-        {"And": [
-          {"Variable": "$.rca.classification", "StringMatches": "config_regression"},
-          {"Variable": "$.rca.confidence", "NumericGreaterThanEquals": 0.6}], "Next": "ProposeFix"}
+    "CollectContext": {
+      "Type": "Task",
+      "Resource": "${CollectContextFnArn}",
+      "ResultPath": "$.context",
+      "TimeoutSeconds": 120,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        },
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 3,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
       ],
-      "Default": "Notify"},
-    "ProposeFix": {"Type": "Task", "Resource": "${ProposeFixFnArn}", "ResultPath": "$.pr",
-      "Catch": [{"ErrorEquals": ["PatchRejected", "States.ALL"], "ResultPath": "$.error", "Next": "Notify"}], "Next": "Verify"},
-    "Verify": {"Type": "Task", "Resource": "arn:aws:states:::codebuild:startBuild.sync",
-      "Parameters": {"ProjectName": "${VerifyProjectName}",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BuildAbstainRca"
+        }
+      ],
+      "Next": "RunRCA"
+    },
+    "RunRCA": {
+      "Type": "Task",
+      "Resource": "${RunRcaFnArn}",
+      "ResultPath": "$.rca",
+      "TimeoutSeconds": 300,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        },
+        {
+          "ErrorEquals": [
+            "ThrottlingException",
+            "ServiceUnavailableException",
+            "ModelTimeoutException"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BuildAbstainRca"
+        }
+      ],
+      "Next": "CreateTicket"
+    },
+    "BuildAbstainRca": {
+      "Type": "Pass",
+      "Comment": "RCA unavailable: emit an explicit abstention so the ticket and notification still happen and nothing routes to ProposeFix.",
+      "Parameters": {
+        "incident_id.$": "$.incident_id",
+        "classification": "insufficient_evidence",
+        "severity": "sev3",
+        "confidence": 0.0,
+        "summary.$": "States.Format('RCA unavailable ({}). Human triage required.', $.error.Error)",
+        "evidence": [
+          {
+            "kind": "log_line",
+            "ref": "pipeline:rca-unavailable",
+            "claim": "Automated RCA did not complete; see pipeline error."
+          }
+        ],
+        "suggested_fix_strategy": "Investigate manually; automated analysis failed."
+      },
+      "ResultPath": "$.rca",
+      "Next": "CreateTicket"
+    },
+    "CreateTicket": {
+      "Type": "Task",
+      "Resource": "${CreateTicketFnArn}",
+      "ResultPath": "$.ticket",
+      "TimeoutSeconds": 60,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        },
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "Notify"
+        }
+      ],
+      "Next": "Route",
+      "Parameters": {
+        "rca.$": "$.rca"
+      }
+    },
+    "Route": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.error",
+              "IsPresent": false
+            },
+            {
+              "Variable": "$.rca.classification",
+              "StringEquals": "code_defect"
+            },
+            {
+              "Variable": "$.rca.confidence",
+              "NumericGreaterThanEquals": 0.6
+            }
+          ],
+          "Next": "ProposeFix"
+        },
+        {
+          "And": [
+            {
+              "Variable": "$.error",
+              "IsPresent": false
+            },
+            {
+              "Variable": "$.rca.classification",
+              "StringEquals": "config_regression"
+            },
+            {
+              "Variable": "$.rca.confidence",
+              "NumericGreaterThanEquals": 0.6
+            }
+          ],
+          "Next": "ProposeFix"
+        }
+      ],
+      "Default": "Notify"
+    },
+    "ProposeFix": {
+      "Type": "Task",
+      "Resource": "${ProposeFixFnArn}",
+      "ResultPath": "$.pr",
+      "TimeoutSeconds": 300,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "Notify"
+        }
+      ],
+      "Next": "Verify",
+      "Parameters": {
+        "rca.$": "$.rca",
+        "ticket.$": "$.ticket"
+      }
+    },
+    "Verify": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::codebuild:startBuild.sync",
+      "TimeoutSeconds": 1800,
+      "Parameters": {
+        "ProjectName": "${VerifyProjectName}",
         "SourceVersion.$": "$.pr.branch",
         "EnvironmentVariablesOverride": [
-          {"Name": "BASE_REF", "Value.$": "$.pr.base"},
-          {"Name": "REPRO_TEST", "Value.$": "$.pr.repro_test_path"}]},
+          {
+            "Name": "BASE_REF",
+            "Value.$": "$.pr.base",
+            "Type": "PLAINTEXT"
+          },
+          {
+            "Name": "REPRO_TEST",
+            "Value.$": "$.pr.repro_test_path",
+            "Type": "PLAINTEXT"
+          }
+        ]
+      },
+      "ResultSelector": {
+        "build_id.$": "$.Build.Id",
+        "build_status.$": "$.Build.BuildStatus"
+      },
+      "ResultPath": "$.verify_build",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "CodeBuild.AccountLimitExceededException",
+            "CodeBuild.CodeBuildException"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.verify_error",
+          "Next": "ParseVerification"
+        }
+      ],
+      "Next": "ParseVerification"
+    },
+    "ParseVerification": {
+      "Type": "Task",
+      "Resource": "${ParseVerificationFnArn}",
       "ResultPath": "$.verify",
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.verify_error", "Next": "RetryOrGiveUp"}], "Next": "Notify"},
-    "RetryOrGiveUp": {"Type": "Choice",
-      "Choices": [{"Variable": "$.pr.attempt", "NumericLessThan": 2, "Next": "ProposeFix"}],
-      "Default": "MarkNeedsHuman"},
-    "MarkNeedsHuman": {"Type": "Task", "Resource": "${MarkNeedsHumanFnArn}", "ResultPath": "$.pr", "Next": "Notify"},
-    "Notify": {"Type": "Task", "Resource": "${NotifyFnArn}", "End": true}
+      "TimeoutSeconds": 60,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "Notify"
+        }
+      ],
+      "Next": "VerifyOutcome",
+      "Parameters": {
+        "verify_build.$": "$.verify_build",
+        "verify_error.$": "$.verify_error"
+      }
+    },
+    "VerifyOutcome": {
+      "Type": "Choice",
+      "Comment": "The patch generator is deterministic today, so re-proposing the same patch cannot help: failed verification goes to a human.",
+      "Choices": [
+        {
+          "Variable": "$.verify.verdict",
+          "StringEquals": "verified",
+          "Next": "Notify"
+        }
+      ],
+      "Default": "MarkNeedsHuman"
+    },
+    "MarkNeedsHuman": {
+      "Type": "Task",
+      "Resource": "${MarkNeedsHumanFnArn}",
+      "ResultPath": "$.pr",
+      "TimeoutSeconds": 60,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "Notify"
+        }
+      ],
+      "Next": "Notify",
+      "Parameters": {
+        "pr.$": "$.pr"
+      }
+    },
+    "Notify": {
+      "Type": "Task",
+      "Resource": "${NotifyFnArn}",
+      "ResultPath": "$.notification",
+      "TimeoutSeconds": 60,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        },
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.notify_error",
+          "Next": "NotifyFailed"
+        }
+      ],
+      "End": true
+    },
+    "NotifyFailed": {
+      "Type": "Fail",
+      "Error": "NotifyFailed",
+      "Cause": "Pipeline could not deliver its notification; the execution-failed alarm pages a human."
+    }
   }
 }

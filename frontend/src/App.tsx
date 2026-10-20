@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { fetchIncidents, fetchStats } from './api';
-import { Incident, Stats } from './types';
+import React, { useState } from 'react';
+import { Incident } from './types';
+import { useDashboardData } from './hooks/useDashboardData';
 import { Header } from './components/Header';
 import { StatsCards } from './components/StatsCards';
 import { ArchitectureBanner } from './components/ArchitectureBanner';
@@ -9,123 +9,82 @@ import { IncidentDetailModal } from './components/IncidentDetailModal';
 import { TriggerSimulationModal } from './components/TriggerSimulationModal';
 import { EvalsModal } from './components/EvalsModal';
 import { AgentCoreDrawer } from './components/AgentCoreDrawer';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { formatRelative } from './lib/format';
+
+type Overlay = { kind: 'incident'; incident: Incident } | { kind: 'trigger' } | { kind: 'evals' } | { kind: 'agentcore' } | null;
 
 export const App: React.FC = () => {
-  const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
-  const [isTriggerOpen, setIsTriggerOpen] = useState(false);
-  const [isEvalsOpen, setIsEvalsOpen] = useState(false);
-  const [isAgentCoreOpen, setIsAgentCoreOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
-
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const [incidentsData, statsData] = await Promise.all([
-        fetchIncidents(),
-        fetchStats(),
-      ]);
-      setIncidents(incidentsData);
-      setStats(statsData);
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Periodic polling when autoRefresh is enabled
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = setInterval(() => {
-      loadData();
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [autoRefresh, loadData]);
+  const [overlay, setOverlay] = useState<Overlay>(null);
+  const data = useDashboardData(autoRefresh);
+  const close = () => setOverlay(null);
 
   const handleSimulationSuccess = (newIncident: Incident) => {
-    setIncidents((prev) => [newIncident, ...prev.filter((i) => i.incident_id !== newIncident.incident_id)]);
-    setSelectedIncident(newIncident);
-    fetchStats().then(setStats).catch(console.error);
+    data.upsertIncident(newIncident);
+    data.reloadStats();
+    setOverlay({ kind: 'incident', incident: newIncident });
   };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       <Header
-        onTriggerSimulation={() => setIsTriggerOpen(true)}
-        onOpenEvals={() => setIsEvalsOpen(true)}
-        onOpenAgentCore={() => setIsAgentCoreOpen(true)}
-        onRefresh={loadData}
-        isLoading={isLoading}
+        onTriggerSimulation={() => setOverlay({ kind: 'trigger' })}
+        onOpenEvals={() => setOverlay({ kind: 'evals' })}
+        onOpenAgentCore={() => setOverlay({ kind: 'agentcore' })}
+        onRefresh={data.refresh}
+        isRefreshing={data.isManualRefreshing}
         autoRefresh={autoRefresh}
         setAutoRefresh={setAutoRefresh}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* KPI Summary Cards */}
-        <StatsCards stats={stats} onOpenAgentCore={() => setIsAgentCoreOpen(true)} />
+        <StatsCards stats={data.stats} onOpenAgentCore={() => setOverlay({ kind: 'agentcore' })} />
 
-        {/* Pipeline Architecture Banner */}
         <ArchitectureBanner />
 
-        {/* Live Incident Stream */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
+        <section className="space-y-3" aria-labelledby="incident-stream-heading">
+          <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
-              <h2 className="text-sm font-semibold tracking-wide text-white uppercase">
-                Live Incident Stream &amp; Audit Trail
+              <h2 id="incident-stream-heading" className="text-sm font-semibold tracking-wide text-white uppercase">
+                Incident Stream &amp; Audit Trail
               </h2>
-              <p className="text-xs text-slate-400">
-                Real-time alarms filtered, deduplicated, and analyzed with grounded evidence
-              </p>
+              <p className="text-xs text-slate-400">Alarms deduplicated and analyzed with cited evidence</p>
             </div>
-            <span className="text-xs text-slate-500 font-mono">
-              {incidents.length} incidents recorded
+            <span className="text-xs text-slate-400 font-mono" aria-live="polite">
+              {data.incidents.length} incidents
+              {data.lastUpdated && ` · updated ${formatRelative(data.lastUpdated.toISOString())}`}
             </span>
           </div>
 
           <IncidentList
-            incidents={incidents}
-            onSelectIncident={setSelectedIncident}
-            isLoading={isLoading && incidents.length === 0}
+            incidents={data.incidents}
+            onSelectIncident={(incident) => setOverlay({ kind: 'incident', incident })}
+            isLoading={data.isInitialLoading}
+            error={data.error}
+            onRetry={data.refresh}
           />
-        </div>
+        </section>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950/80 py-6 text-center text-xs text-slate-500">
-        <p>
-          OpsPilot — Autonomous SRE Monitoring &amp; Remediation Agent • Built with AWS Strands Agents SDK &amp; Amazon Bedrock AgentCore
-        </p>
+      <footer className="border-t border-slate-900 bg-slate-950/80 py-6 text-center text-xs text-slate-400">
+        <p>OpsPilot — Autonomous SRE Monitoring &amp; Remediation Agent (proof of concept)</p>
       </footer>
 
-      {/* Modals & Overlays */}
-      <IncidentDetailModal
-        incident={selectedIncident}
-        onClose={() => setSelectedIncident(null)}
-      />
-
+      <IncidentDetailModal incident={overlay?.kind === 'incident' ? overlay.incident : null} onClose={close} />
       <TriggerSimulationModal
-        isOpen={isTriggerOpen}
-        onClose={() => setIsTriggerOpen(false)}
+        isOpen={overlay?.kind === 'trigger'}
+        onClose={close}
         onSimulationSuccess={handleSimulationSuccess}
       />
-
-      <EvalsModal
-        isOpen={isEvalsOpen}
-        onClose={() => setIsEvalsOpen(false)}
-      />
-
-      <AgentCoreDrawer
-        isOpen={isAgentCoreOpen}
-        onClose={() => setIsAgentCoreOpen(false)}
-      />
+      <EvalsModal isOpen={overlay?.kind === 'evals'} onClose={close} />
+      <AgentCoreDrawer isOpen={overlay?.kind === 'agentcore'} onClose={close} stats={data.stats} />
     </div>
   );
 };
+
+export const Root: React.FC = () => (
+  <ErrorBoundary label="OpsPilot dashboard">
+    <App />
+  </ErrorBoundary>
+);

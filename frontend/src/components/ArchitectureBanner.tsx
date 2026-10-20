@@ -19,7 +19,7 @@ export const ArchitectureBanner: React.FC = () => {
         <div>
           <h2 className="text-sm font-semibold tracking-wide text-white uppercase flex items-center gap-2">
             <span>Autonomous SRE Pipeline Architecture</span>
-            <span className="px-2 py-0.5 text-[10px] font-normal lowercase tracking-normal bg-slate-800 text-slate-300 rounded border border-slate-700">
+            <span className="px-2 py-0.5 text-[11px] font-normal lowercase tracking-normal bg-slate-800 text-slate-300 rounded border border-slate-700">
               AWS Step Functions Standard Workflow
             </span>
           </h2>
@@ -29,29 +29,29 @@ export const ArchitectureBanner: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+      <ol className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
         {steps.map((step, idx) => {
           const Icon = step.icon;
           return (
-            <div
+            <li
               key={step.id}
               className="relative bg-slate-900/60 border border-slate-800/90 rounded-xl p-3 flex flex-col items-center text-center group hover:border-slate-700 transition"
             >
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${step.color} mb-2`}>
-                <Icon className="w-4 h-4" />
+                <Icon className="w-4 h-4" aria-hidden="true" />
               </div>
               <span className="text-xs font-semibold text-slate-200 leading-tight">{step.title}</span>
-              <span className="text-[10px] text-slate-400 mt-0.5">{step.subtitle}</span>
+              <span className="text-[11px] text-slate-400 mt-0.5">{step.subtitle}</span>
 
               {idx < steps.length - 1 && (
-                <div className="hidden lg:block absolute -right-2 top-1/2 -translate-y-1/2 z-10 text-slate-600 pointer-events-none">
-                  →
+                <div className="hidden lg:block absolute -right-2 top-1/2 -translate-y-1/2 z-10 text-slate-500 pointer-events-none">
+                  <span aria-hidden="true">→</span>
                 </div>
               )}
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
     </section>
   );
 };

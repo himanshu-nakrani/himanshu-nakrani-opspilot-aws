@@ -111,7 +111,8 @@ def test_forced_failure_gives_retry_then_needs_human(sample_pipeline_state):
 
     # MarkNeedsHuman task executes
     event = {"pr": pr_attempt_2.model_dump()}
-    updated_pr_data = mark_needs_human_handler(event)
+    from tests.test_fix_agent import FakeGitHub
+    updated_pr_data = mark_needs_human_handler(event, github=FakeGitHub())
     assert updated_pr_data["status"] == "needs_human"
 
     updated_pr = PrRef.model_validate(updated_pr_data)

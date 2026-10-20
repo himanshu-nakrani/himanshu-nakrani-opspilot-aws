@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { fetchEvals } from '../api';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertOctagon, CheckCircle2, FlaskConical, Loader2, RotateCcw, XCircle } from 'lucide-react';
 import { EvalsReport } from '../types';
-import { FlaskConical, CheckCircle2, X, AlertCircle, RefreshCw, Trophy } from 'lucide-react';
+import { errorMessage, fetchEvals, isAbortError } from '../api';
+import { formatPercent, humanize } from '../lib/format';
+import { Modal } from './Modal';
+import { ErrorBoundary } from './ErrorBoundary';
 
 interface EvalsModalProps {
   isOpen: boolean;
@@ -12,171 +15,192 @@ export const EvalsModal: React.FC<EvalsModalProps> = ({ isOpen, onClose }) => {
   const [report, setReport] = useState<EvalsReport | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
 
-  const loadEvals = async () => {
+  const run = useCallback(async () => {
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
     setIsLoading(true);
     setError(null);
     try {
-      const data = await fetchEvals();
-      setReport(data);
-    } catch (e: any) {
-      setError(e.message || 'Failed to execute evaluation harness');
+      setReport(await fetchEvals(controller.signal));
+    } catch (e) {
+      if (!isAbortError(e)) setError(errorMessage(e, 'Failed to run evals'));
     } finally {
-      setIsLoading(false);
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+        setIsLoading(false);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
-    if (isOpen && !report) {
-      loadEvals();
-    }
-  }, [isOpen]);
-
-  if (!isOpen) return null;
+    if (!isOpen) return;
+    if (!report) run();
+    return () => controllerRef.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, run]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/60">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400">
-              <FlaskConical className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <span>OpsPilot M6 Benchmark Evaluation Suite</span>
-                {report && report.all_targets_passed && (
-                  <span className="px-2 py-0.5 text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full flex items-center gap-1">
-                    <Trophy className="w-3 h-3" /> 100% Targets Met
-                  </span>
-                )}
-              </h3>
-              <p className="text-xs text-slate-400">Deterministic replay of 10 golden historical incident fixtures</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={loadEvals}
-              disabled={isLoading}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition disabled:opacity-50 cursor-pointer"
-              title="Re-run evaluations"
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-sky-400' : ''}`} />
-            </button>
-            <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white rounded-lg transition cursor-pointer">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Body */}
-        <div className="p-6 overflow-y-auto space-y-6">
-          {isLoading && !report && (
-            <div className="py-12 text-center text-xs text-slate-400 flex flex-col items-center justify-center gap-3">
-              <span className="w-6 h-6 border-2 border-sky-500/20 border-t-sky-500 rounded-full animate-spin" />
-              <span>Replaying 10 golden incident fixtures through AWS Strands & Bedrock AgentCore...</span>
-            </div>
-          )}
-
-          {error && (
-            <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-300 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4" />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {report && (
-            <>
-              {/* Summary Metrics Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3 bg-slate-950 border border-slate-800/80 rounded-xl text-center">
-                  <span className="text-[10px] uppercase font-semibold text-slate-400 block">Classification Acc.</span>
-                  <span className="text-xl font-bold text-emerald-400 mt-1 block">
-                    {report.classification_accuracy}%
-                  </span>
-                  <span className="text-[10px] text-slate-500">10 / 10 fixtures</span>
-                </div>
-
-                <div className="p-3 bg-slate-950 border border-slate-800/80 rounded-xl text-center">
-                  <span className="text-[10px] uppercase font-semibold text-slate-400 block">Routing Accuracy</span>
-                  <span className="text-xl font-bold text-emerald-400 mt-1 block">
-                    {report.route_accuracy}%
-                  </span>
-                  <span className="text-[10px] text-slate-500">ProposeFix vs Notify</span>
-                </div>
-
-                <div className="p-3 bg-slate-950 border border-slate-800/80 rounded-xl text-center">
-                  <span className="text-[10px] uppercase font-semibold text-slate-400 block">Abstention Precision</span>
-                  <span className="text-xl font-bold text-sky-400 mt-1 block">
-                    {report.abstention_precision}%
-                  </span>
-                  <span className="text-[10px] text-slate-500">Zero false positives</span>
-                </div>
-
-                <div className="p-3 bg-slate-950 border border-slate-800/80 rounded-xl text-center">
-                  <span className="text-[10px] uppercase font-semibold text-slate-400 block">Mean Latency</span>
-                  <span className="text-xl font-bold text-purple-400 mt-1 block">
-                    {report.mean_latency_ms.toFixed(1)} ms
-                  </span>
-                  <span className="text-[10px] text-slate-500">Offline deterministic</span>
-                </div>
-              </div>
-
-              {/* Fixture Details Table */}
-              <div className="border border-slate-800 rounded-xl overflow-hidden">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
-                    <tr>
-                      <th className="p-3">Fixture</th>
-                      <th className="p-3">Gold Class</th>
-                      <th className="p-3">Predicted Class</th>
-                      <th className="p-3">Route Verdict</th>
-                      <th className="p-3 text-right">Conf.</th>
-                      <th className="p-3 text-center">Result</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 bg-slate-900/40 font-mono text-[11px]">
-                    {report.details.map((f) => (
-                      <tr key={f.id} className="hover:bg-slate-800/40">
-                        <td className="p-3 font-semibold text-white">{f.name}</td>
-                        <td className="p-3 text-slate-400">{f.gold_classification}</td>
-                        <td className="p-3 text-purple-300">{f.predicted_classification}</td>
-                        <td className="p-3 text-sky-300">{f.predicted_route}</td>
-                        <td className="p-3 text-right text-emerald-400">{Math.round(f.confidence * 100)}%</td>
-                        <td className="p-3 text-center">
-                          {f.passed ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-400 font-sans font-semibold text-xs">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> Pass
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-rose-400 font-sans font-semibold text-xs">
-                              <AlertCircle className="w-3.5 h-3.5" /> Fail
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-slate-800 bg-slate-900/60 flex items-center justify-between">
-          <span className="text-xs text-slate-500">
-            Target spec: &gt;90% classification accuracy, &gt;90% location hit rate, 100% abstention precision
-          </span>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      icon={<FlaskConical className="w-5 h-5 text-sky-400 mt-0.5" aria-hidden="true" />}
+      title="M6 benchmark evals"
+      description="Replays the golden fixtures through the RCA agent and router."
+      footer={
+        <>
+          <span className="text-xs text-slate-400">Results come from the offline scripted model, not a live Bedrock run.</span>
           <button
-            onClick={onClose}
-            className="px-4 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition cursor-pointer"
+            type="button"
+            onClick={run}
+            disabled={isLoading}
+            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 disabled:opacity-60 flex items-center gap-1.5"
           >
-            Close
+            <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+            Re-run
           </button>
-        </div>
+        </>
+      }
+    >
+      <div aria-live="polite">
+        {isLoading && (
+          <p role="status" className="flex items-center gap-2 text-sm text-slate-300">
+            <Loader2 className="w-4 h-4 motion-safe:animate-spin" aria-hidden="true" />
+            Running fixtures…
+          </p>
+        )}
+        {error && !isLoading && (
+          <p role="alert" className="flex items-start gap-2 text-sm text-red-200 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+            <AlertOctagon className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
+            {error}
+          </p>
+        )}
+      </div>
+      {report && !isLoading && (
+        <ErrorBoundary inline label="Evals report">
+          <EvalsReportView report={report} />
+        </ErrorBoundary>
+      )}
+    </Modal>
+  );
+};
+
+const Metric: React.FC<{ label: string; value: number; target?: number; detail: string }> = ({ label, value, target, detail }) => {
+  const met = target === undefined ? null : value >= target;
+  return (
+    <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-800">
+      <h3 className="text-xs uppercase tracking-wider text-slate-300">{label}</h3>
+      <p className={`text-2xl font-bold mt-1 ${met === false ? 'text-red-300' : 'text-white'}`}>{formatPercent(round1(value))}</p>
+      <p className="text-xs text-slate-400 mt-1">
+        {detail}
+        {target !== undefined && ` · target ≥ ${target}%`}
+      </p>
+    </div>
+  );
+};
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+export const EvalsReportView: React.FC<{ report: EvalsReport }> = ({ report }) => {
+  const { targets } = report;
+  return (
+    <div className="space-y-6">
+      <div
+        className={`flex flex-wrap items-center gap-3 p-3 rounded-xl border text-sm ${
+          report.all_targets_passed
+            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
+            : 'bg-red-500/10 border-red-500/30 text-red-200'
+        }`}
+      >
+        {report.all_targets_passed ? (
+          <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+        ) : (
+          <XCircle className="w-4 h-4" aria-hidden="true" />
+        )}
+        <span>
+          {report.passed_fixtures} / {report.total_fixtures} fixtures passed ·{' '}
+          {report.all_targets_passed ? 'all targets met' : 'one or more targets missed'}
+        </span>
+        <span className="ml-auto text-xs font-mono">
+          mean {Math.round(report.mean_tokens)} tokens · {report.mean_latency_ms.toFixed(1)} ms
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Metric
+          label="Classification"
+          value={report.classification_accuracy}
+          target={targets.classification_accuracy}
+          detail={`${report.classification_correct} / ${report.total_fixtures} correct`}
+        />
+        <Metric
+          label="Location hit rate"
+          value={report.location_hit_rate}
+          target={targets.location_hit_rate}
+          detail={report.location_total ? `${report.location_hits} / ${report.location_total} within ±2 lines` : 'no location fixtures'}
+        />
+        <Metric
+          label="Abstention precision"
+          value={report.abstention_precision}
+          target={targets.abstention_precision}
+          detail={report.abstention_total ? `${report.abstention_hits} / ${report.abstention_total} abstained` : 'no abstention fixtures'}
+        />
+        <Metric
+          label="Evidence ref validity"
+          value={report.evidence_ref_validity_rate}
+          target={targets.evidence_ref_validity_rate}
+          detail="cited refs found in bundle"
+        />
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-slate-800">
+        <table className="w-full text-xs">
+          <caption className="sr-only">Per-fixture results</caption>
+          <thead className="bg-slate-900 text-slate-300 text-left">
+            <tr>
+              <th scope="col" className="p-2.5 font-semibold">Fixture</th>
+              <th scope="col" className="p-2.5 font-semibold">Expected</th>
+              <th scope="col" className="p-2.5 font-semibold">Predicted</th>
+              <th scope="col" className="p-2.5 font-semibold">Route</th>
+              <th scope="col" className="p-2.5 font-semibold text-right">Conf.</th>
+              <th scope="col" className="p-2.5 font-semibold text-right">Latency</th>
+              <th scope="col" className="p-2.5 font-semibold">Result</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800">
+            {report.details.map((d) => (
+              <tr key={d.id} className="text-slate-200">
+                <th scope="row" className="p-2.5 font-normal text-left">
+                  <span className="block">{d.name}</span>
+                  <span className="block font-mono text-slate-400">{d.id}</span>
+                </th>
+                <td className="p-2.5">{humanize(d.gold_classification)}</td>
+                <td className={`p-2.5 ${d.predicted_classification === d.gold_classification ? '' : 'text-red-300'}`}>
+                  {humanize(d.predicted_classification)}
+                </td>
+                <td className={`p-2.5 font-mono ${d.predicted_route === d.gold_route ? '' : 'text-red-300'}`}>
+                  {d.predicted_route}
+                  {d.predicted_route !== d.gold_route && <span className="text-slate-400"> (expected {d.gold_route})</span>}
+                </td>
+                <td className="p-2.5 text-right font-mono">{Math.round(d.confidence * 100)}%</td>
+                <td className="p-2.5 text-right font-mono">{d.latency_ms.toFixed(1)} ms</td>
+                <td className="p-2.5">
+                  {d.passed ? (
+                    <span className="inline-flex items-center gap-1 text-emerald-300">
+                      <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Pass
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-red-300">
+                      <XCircle className="w-3.5 h-3.5" aria-hidden="true" /> Fail
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

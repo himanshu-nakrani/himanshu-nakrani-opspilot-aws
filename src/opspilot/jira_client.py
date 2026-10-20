@@ -11,9 +11,14 @@ from typing import Any, Dict, Optional
 import boto3
 import httpx
 
+from opspilot.audit import update_incident
 from opspilot.contracts import RcaResult, TicketRef
 
 logger = logging.getLogger(__name__)
+
+
+class JiraError(RuntimeError):
+    """A Jira API call did not succeed."""
 logger.setLevel(logging.INFO)
 
 SEVERITY_TO_PRIORITY = {
@@ -204,14 +209,14 @@ def create_issue(
         create_url = f"{base_url}/rest/api/3/issue"
         resp = client.post(create_url, json=payload, auth=auth, timeout=10.0)
         if resp.status_code in (200, 201):
-            key = resp.json().get("key", f"{project_key}-1")
+            key = resp.json().get("key")
+            if not key:
+                raise JiraError("Jira create issue returned no key")
             logger.info("Created Jira issue %s for incident %s", key, rca.incident_id)
             return TicketRef(key=key, url=f"{base_url}/browse/{key}", incident_id=rca.incident_id)
         else:
-            logger.error("Jira create issue returned %s: %s", resp.status_code, resp.text)
-            # Fallback for mock environments
-            fallback_key = f"{project_key}-99"
-            return TicketRef(key=fallback_key, url=f"{base_url}/browse/{fallback_key}", incident_id=rca.incident_id)
+            logger.error("Jira create issue returned %s: %s", resp.status_code, resp.text[:300])
+            raise JiraError(f"Jira create issue failed: HTTP {resp.status_code}")
 
     if http_client:
         return _do_call(http_client)
@@ -231,21 +236,6 @@ def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, A
     rca = RcaResult.model_validate(rca_data)
     ticket_ref = create_issue(rca)
 
-    # Save to DynamoDB
-    table_name = os.environ.get("INCIDENTS_TABLE_NAME", "opspilot-incidents")
-    try:
-        dynamodb = boto3.client("dynamodb")
-        dynamodb.update_item(
-            TableName=table_name,
-            Key={"incident_id": {"S": rca.incident_id}},
-            UpdateExpression="SET #tk = :tk, #tu = :tu",
-            ExpressionAttributeNames={"#tk": "ticket_key", "#tu": "ticket_url"},
-            ExpressionAttributeValues={
-                ":tk": {"S": ticket_ref.key},
-                ":tu": {"S": ticket_ref.url},
-            },
-        )
-    except Exception as e:
-        logger.warning("Could not update DynamoDB ticket for incident %s: %s", rca.incident_id, e)
+    update_incident(rca.incident_id, {"ticket_key": ticket_ref.key, "ticket_url": ticket_ref.url, "status": "TICKETED"})
 
     return ticket_ref.model_dump()

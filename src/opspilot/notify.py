@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 import boto3
 import httpx
 
+from opspilot.audit import update_incident
+from opspilot.config import is_live
 from opspilot.contracts import PrRef, RcaResult, TicketRef, VerificationResult
 
 logger = logging.getLogger(__name__)
@@ -230,7 +232,7 @@ def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, A
         except Exception:
             pass
 
-    error = event.get("error") or event.get("verify_error")
+    error = event.get("error")
     error_str = str(error) if error else None
 
     # Construct messages
@@ -241,20 +243,12 @@ def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, A
     summary_text = rca.summary if rca else "OpsPilot pipeline completed."
     sns_sent = send_sns_notification(subject, summary_text)
 
-    # Save final notification status in DynamoDB
     incident_id = (rca.incident_id if rca else None) or event.get("incident_id", "unknown")
-    table_name = os.environ.get("INCIDENTS_TABLE_NAME", "opspilot-incidents")
-    try:
-        dynamodb = boto3.client("dynamodb")
-        dynamodb.update_item(
-            TableName=table_name,
-            Key={"incident_id": {"S": incident_id}},
-            UpdateExpression="SET #s = :s",
-            ExpressionAttributeNames={"#s": "status"},
-            ExpressionAttributeValues={":s": {"S": "NOTIFIED"}},
-        )
-    except Exception as e:
-        logger.warning("Could not update DynamoDB for incident %s: %s", incident_id, e)
+    if not (slack_sent or sns_sent) and is_live():
+        raise RuntimeError("No notification channel delivered the message")
+    final_status = "FAILED" if error_str else ("VERIFIED" if verify and verify.verdict == "verified" else
+                    "NEEDS_HUMAN" if (pr and pr.status == "needs_human") else "NOTIFIED")
+    update_incident(incident_id, {"status": final_status, "verdict": verify.verdict if verify else "unverified"})
 
     return {
         "status": "notified",
