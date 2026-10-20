@@ -18,7 +18,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import boto3
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 
 from opspilot.contracts import ContextBundle, RcaResult
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_PATH = Path(__file__).resolve().parent / "templates" / "index.html"
+FRONTEND_DIST_PATH = REPO_ROOT / "frontend" / "dist"
 
 # Local in-memory incident cache for demo & offline mode
 LOCAL_INCIDENTS_CACHE: List[Dict[str, Any]] = []
@@ -99,10 +102,25 @@ async def lifespan(app: FastAPI):
 
 dashboard_app = FastAPI(title="OpsPilot SRE Dashboard", lifespan=lifespan)
 
+dashboard_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+if (FRONTEND_DIST_PATH / "assets").exists():
+    dashboard_app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_PATH / "assets")), name="assets")
+
 
 @dashboard_app.get("/", response_class=HTMLResponse)
 def get_dashboard_html():
-    """Serve the SRE dashboard single page interface."""
+    """Serve the SRE dashboard single page interface (React SPA with template fallback)."""
+    dist_index = FRONTEND_DIST_PATH / "index.html"
+    if dist_index.exists():
+        with open(dist_index, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
     if TEMPLATE_PATH.exists():
         with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())

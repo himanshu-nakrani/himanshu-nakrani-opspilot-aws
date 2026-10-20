@@ -4,3 +4,5 @@ __pycache__/
 .env
 cdk.out/
 .pytest_cache/
+node_modules/
+

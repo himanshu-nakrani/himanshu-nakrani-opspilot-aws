@@ -39,17 +39,35 @@ OpsPilot is built using AWS's modern agentic architecture:
   - **AgentCore Policy:** Blast-radius guardrails (max 3 files / 80 lines, protected files check), evidence grounding verification, and automatic abstention on noisy logs.
   - **AgentCore Memory:** Structured working memory for session state, ruled-out hypotheses, and tool audit trails.
 
-## SRE Dashboard (FastAPI)
-Launch the lightweight real-time SRE dashboard:
+## SRE Dashboard (React + Vite + Tailwind + FastAPI)
+OpsPilot provides a modern, responsive SRE operational dashboard built with **React 18, TypeScript, Vite, Tailwind CSS, and Lucide icons**, served by the **FastAPI** backend:
+
+### Running the Dashboard
 ```bash
+# 1. Full Production Mode: Run FastAPI with integrated React SPA:
 make dashboard
-# or: uvicorn dashboard.app:dashboard_app --port 8000
+# -> Open http://localhost:8000
+
+# 2. Frontend Development Mode (Vite Hot-Reload):
+make frontend
+# -> Open http://localhost:5173 (proxies /api requests to FastAPI on port 8000)
+
+# 3. Build React distribution:
+make build-frontend
 ```
-- Open `http://localhost:8000` to view the live incident stream, Bedrock RCA confidence scores, grounded evidence, patch diff viewer, Jira & GitHub links, and the M6 benchmark replay.
+
+### Dashboard Features
+- **Live Incident Stream & Audit Trail:** Search, filter, and inspect incidents by classification (`code_defect`, `config_regression`, `dependency`, `resource`, `insufficient_evidence`) with confidence bars and status indicators.
+- **Root Cause & Grounded Evidence Inspector:** View full RCA summaries, pinpointed source file:line locations, suggested fix strategies, and validated citations (log IDs, stack trace frames, git commits).
+- **Interactive Unified Patch Diff Viewer:** Syntax-highlighted git diff display with additions (`+`), deletions (`-`), and hunk headers.
+- **One-Click Incident Simulation (M1):** Trigger the planted missing-order bug on `sample-service`, observe CloudWatch metric filter thresholds, alarm state transitions, DynamoDB 15-minute dedup verification, and automated patch creation.
+- **M6 Benchmark Evaluation Suite:** Execute and review live replays of the 10 golden historical incident fixtures with accuracy metrics and routing verdicts.
+- **AWS Strands & Bedrock AgentCore Inspector:** Live panel displaying active AgentCore policies (blast radius, protected paths, evidence grounding, abstention) and Gateway tools (`query_logs`, `get_file`, `get_commit_diff`, `submit_rca`).
+
 - **API Endpoints:**
-  - `GET /` — Dark-themed SRE UI
+  - `GET /` — Serves modern React SPA (with fallback to lightweight SSR template)
   - `GET /api/incidents` — List all incidents & audit logs
   - `GET /api/incidents/{id}` — Full incident RCA, evidence & unified patch diff
-  - `GET /api/stats` — Incident KPI metrics
+  - `GET /api/stats` — Incident KPI metrics and active AgentCore policies
   - `POST /api/trigger` — Simulate planted bug failure & alarm dedup
   - `GET /api/evals` — Execute live M6 benchmark fixtures replay
