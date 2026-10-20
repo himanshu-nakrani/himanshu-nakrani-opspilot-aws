@@ -1,0 +1,19 @@
+{
+  "app": "python3 infra/app.py",
+  "watch": {
+    "include": [
+      "**"
+    ],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "requirements*.txt",
+      "**/__pycache__",
+      ".git",
+      ".venv"
+    ]
+  },
+  "context": {
+    "@aws-cdk/core:validateAgainstDefaultRules": false
+  }
+}

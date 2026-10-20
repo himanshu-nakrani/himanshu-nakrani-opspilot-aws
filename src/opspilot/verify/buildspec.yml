@@ -1,0 +1,23 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install -r requirements.txt || pip install pytest fastapi mangum httpx pydantic boto3
+  build:
+    commands:
+      - echo "=== Phase 1: Verify repro test FAILS on base ($BASE_REF) ==="
+      - git checkout $BASE_REF
+      - |
+        if pytest $REPRO_TEST; then
+          echo "ERROR: Repro test passed on base! A valid reproduction test must fail on base."
+          exit 1
+        else
+          echo "repro_fails_on_base=true"
+        fi
+      - echo "=== Phase 2: Verify test suite PASSES on fix branch ==="
+      - git checkout -
+      - pytest
+      - echo "suite_passes_on_fix=true"

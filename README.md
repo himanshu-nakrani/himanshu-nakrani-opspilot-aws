@@ -10,7 +10,7 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 | Milestone | State |
 |---|---|
 | M0 Design docs, contracts, state machine | ✅ this commit |
-| M1 Sample service + failure + alarm → EventBridge | ⏳ |
+| M1 Sample service + failure + alarm → EventBridge | ✅ done |
 | M2 Context collector + RCA agent (Bedrock, structured output) | ⏳ |
 | M3 Classifier/router + Jira ticket | ⏳ |
 | M4 Patch agent → branch + PR with reproduction test | ⏳ |
