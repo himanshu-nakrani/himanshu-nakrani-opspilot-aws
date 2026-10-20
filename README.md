@@ -12,7 +12,7 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 | M0 Design docs, contracts, state machine | ✅ this commit |
 | M1 Sample service + failure + alarm → EventBridge | ✅ done |
 | M2 Context collector + RCA agent (Bedrock, structured output) | ✅ done |
-| M3 Classifier/router + Jira ticket | ⏳ |
+| M3 Classifier/router + Jira ticket | ✅ done |
 | M4 Patch agent → branch + PR with reproduction test | ⏳ |
 | M5 CodeBuild verification + notification | ⏳ |
 | M6 Offline eval harness (replay fixtures) | ⏳ |
