@@ -29,3 +29,18 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 3. **A verified PR, not just a green build.** The patch agent must add a reproduction test that fails on `main` and passes on the fix branch. CodeBuild runs both checks.
 4. **Least privilege.** The LLM gets no AWS write permissions. The GitHub token can only write to `opspilot/*` branches on the one target repo. Branch protection requires a human review before merge.
 5. **The model is configurable** (`BEDROCK_MODEL_ID`). The plan named Claude 3.5 Sonnet. Pick the current Claude Sonnet model or inference profile available in your Bedrock region.
+
+## SRE Dashboard (FastAPI)
+Launch the lightweight real-time SRE dashboard:
+```bash
+make dashboard
+# or: uvicorn dashboard.app:dashboard_app --port 8000
+```
+- Open `http://localhost:8000` to view the live incident stream, Bedrock RCA confidence scores, grounded evidence, patch diff viewer, Jira & GitHub links, and the M6 benchmark replay.
+- **API Endpoints:**
+  - `GET /` — Dark-themed SRE UI
+  - `GET /api/incidents` — List all incidents & audit logs
+  - `GET /api/incidents/{id}` — Full incident RCA, evidence & unified patch diff
+  - `GET /api/stats` — Incident KPI metrics
+  - `POST /api/trigger` — Simulate planted bug failure & alarm dedup
+  - `GET /api/evals` — Execute live M6 benchmark fixtures replay
