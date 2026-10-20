@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 import aws_cdk as cdk
 from aws_cdk import (
@@ -13,6 +14,9 @@ from aws_cdk import (
     aws_events_targets as targets,
     aws_codebuild as codebuild,
     aws_stepfunctions as sfn,
+    aws_sqs as sqs,
+    aws_cloudwatch as cloudwatch,
+    aws_cloudwatch_actions as cw_actions,
 )
 from constructs import Construct
 
@@ -51,7 +55,26 @@ class PipelineStack(Stack):
             "GITHUB_SECRET_ARN": core_stack.github_secret.secret_arn,
             "SLACK_SECRET_ARN": core_stack.slack_secret.secret_arn,
             "SNS_TOPIC_ARN": core_stack.alerts_topic.topic_arn,
+            # Explicit live mode: real Bedrock/GitHub/Jira, failures raise to Step Functions.
+            "OPSPILOT_MODE": "live",
         }
+
+        # Every Lambda shares one bundled asset: src/opspilot plus requirements-lambda.txt
+        # installed into the package root. Without this, the functions import-fail at
+        # cold start (pydantic, httpx, strands-agents are not in the Lambda runtime).
+        repo_root = str(Path(__file__).resolve().parent.parent)
+        lambda_code = lambda_.Code.from_asset(
+            repo_root,
+            exclude=["*", "!src", "!src/**", "!requirements-lambda.txt"],
+            bundling=cdk.BundlingOptions(
+                image=lambda_.Runtime.PYTHON_3_12.bundling_image,
+                command=[
+                    "bash", "-c",
+                    "pip install --no-cache-dir -r requirements-lambda.txt -t /asset-output "
+                    "&& cp -r src/opspilot /asset-output/opspilot",
+                ],
+            ),
+        )
 
         # 1. CollectContext Function
         self.collect_context_fn = lambda_.Function(
@@ -60,7 +83,7 @@ class PipelineStack(Stack):
             function_name="opspilot-collect-context",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="opspilot.collect_context.handler",
-            code=lambda_.Code.from_asset("src"),
+            code=lambda_code,
             timeout=Duration.seconds(60),
             memory_size=512,
             environment=common_env,
@@ -75,7 +98,7 @@ class PipelineStack(Stack):
             function_name="opspilot-run-rca",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="opspilot.rca.agent.handler",
-            code=lambda_.Code.from_asset("src"),
+            code=lambda_code,
             timeout=Duration.minutes(3),
             memory_size=1024,
             environment=common_env,
@@ -84,7 +107,7 @@ class PipelineStack(Stack):
         self.run_rca_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
-                resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{bedrock_model_id}", "*"],
+                resources=self._bedrock_model_arns(bedrock_model_id),
             )
         )
 
@@ -95,7 +118,7 @@ class PipelineStack(Stack):
             function_name="opspilot-create-ticket",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="opspilot.jira_client.handler",
-            code=lambda_.Code.from_asset("src"),
+            code=lambda_code,
             timeout=Duration.seconds(60),
             memory_size=256,
             environment=common_env,
@@ -110,19 +133,14 @@ class PipelineStack(Stack):
             function_name="opspilot-propose-fix",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="opspilot.fix.agent.handler",
-            code=lambda_.Code.from_asset("src"),
+            code=lambda_code,
             timeout=Duration.minutes(5),
             memory_size=1024,
             environment=common_env,
         )
         core_stack.incidents_table.grant_read_write_data(self.propose_fix_fn)
         core_stack.github_secret.grant_read(self.propose_fix_fn)
-        self.propose_fix_fn.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["bedrock:InvokeModel"],
-                resources=["*"],
-            )
-        )
+        # ProposeFix does not call Bedrock today (stub generator); grant it when a real patch agent lands.
 
         # 5. MarkNeedsHuman Function
         self.mark_needs_human_fn = lambda_.Function(
@@ -131,7 +149,7 @@ class PipelineStack(Stack):
             function_name="opspilot-mark-needs-human",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="opspilot.fix.agent.mark_needs_human_handler",
-            code=lambda_.Code.from_asset("src"),
+            code=lambda_code,
             timeout=Duration.seconds(60),
             memory_size=256,
             environment=common_env,
@@ -146,7 +164,7 @@ class PipelineStack(Stack):
             function_name="opspilot-notify",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="opspilot.notify.handler",
-            code=lambda_.Code.from_asset("src"),
+            code=lambda_code,
             timeout=Duration.seconds(60),
             memory_size=256,
             environment=common_env,
@@ -173,6 +191,22 @@ class PipelineStack(Stack):
             build_spec=codebuild.BuildSpec.from_source_filename("src/opspilot/verify/buildspec.yml"),
         )
 
+        # 7b. ParseVerification Function: CodeBuild Build -> VerificationResult
+        self.parse_verification_fn = lambda_.Function(
+            self,
+            "ParseVerificationFunction",
+            function_name="opspilot-parse-verification",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="opspilot.verify.runner.parse_verification_handler",
+            code=lambda_code,
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            environment=common_env,
+        )
+        self.parse_verification_fn.add_to_role_policy(
+            iam.PolicyStatement(actions=["codebuild:BatchGetBuilds"], resources=[self.verify_project.project_arn])
+        )
+
         # 8. Step Functions State Machine (from statemachine/opspilot.asl.json)
         asl_path = Path(__file__).resolve().parent.parent / "statemachine" / "opspilot.asl.json"
         with open(asl_path, "r", encoding="utf-8") as f:
@@ -185,6 +219,9 @@ class PipelineStack(Stack):
         asl_rendered = asl_rendered.replace("${VerifyProjectName}", self.verify_project.project_name)
         asl_rendered = asl_rendered.replace("${MarkNeedsHumanFnArn}", self.mark_needs_human_fn.function_arn)
         asl_rendered = asl_rendered.replace("${NotifyFnArn}", self.notify_fn.function_arn)
+        asl_rendered = asl_rendered.replace("${ParseVerificationFnArn}", self.parse_verification_fn.function_arn)
+        if re.search(r"\$\{[A-Za-z]+(?:FnArn|ProjectName)\}", asl_rendered):
+            raise ValueError("Unsubstituted placeholder left in statemachine/opspilot.asl.json")
 
         self.state_machine = sfn.CfnStateMachine(
             self,
@@ -206,7 +243,7 @@ class PipelineStack(Stack):
             function_name="opspilot-ingest",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="opspilot.ingest.handle_alarm_event",
-            code=lambda_.Code.from_asset("src"),
+            code=lambda_code,
             timeout=Duration.seconds(30),
             memory_size=256,
             environment=ingest_env,
@@ -215,7 +252,7 @@ class PipelineStack(Stack):
         self.ingest_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:StartExecution"],
-                resources=["*"],
+                resources=[self.state_machine.ref],
             )
         )
 
@@ -236,7 +273,40 @@ class PipelineStack(Stack):
                 },
             ),
         )
-        self.alarm_rule.add_target(targets.LambdaFunction(self.ingest_fn))
+        self.ingest_dlq = sqs.Queue(self, "IngestDlq", queue_name="opspilot-ingest-dlq",
+                                    retention_period=Duration.days(14))
+        self.alarm_rule.add_target(
+            targets.LambdaFunction(
+                self.ingest_fn,
+                dead_letter_queue=self.ingest_dlq,
+                retry_attempts=4,
+                max_event_age=Duration.hours(2),
+            )
+        )
+
+        # Page a human if the pipeline itself fails (including NotifyFailed).
+        cloudwatch.Alarm(
+            self,
+            "PipelineExecutionsFailedAlarm",
+            alarm_name="opspilot-executions-failed",
+            metric=cloudwatch.Metric(
+                namespace="AWS/States",
+                metric_name="ExecutionsFailed",
+                dimensions_map={"StateMachineArn": self.state_machine.ref},
+                period=Duration.minutes(5),
+                statistic="Sum",
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        ).add_alarm_action(cw_actions.SnsAction(core_stack.alerts_topic))
+
+    def _bedrock_model_arns(self, model_id: str) -> list:
+        """Scope Bedrock to the configured model (and its cross-region inference profile)."""
+        arns = [f"arn:aws:bedrock:*::foundation-model/{model_id.split('.', 1)[1] if model_id.split('.', 1)[0] in ('us', 'eu', 'apac', 'global') else model_id}"]
+        if model_id.split(".", 1)[0] in ("us", "eu", "apac", "global"):
+            arns.append(f"arn:aws:bedrock:{self.region}:{self.account}:inference-profile/{model_id}")
+        return arns
 
     def _create_state_machine_role(self) -> iam.Role:
         role = iam.Role(
@@ -244,31 +314,27 @@ class PipelineStack(Stack):
             "OpsPilotSfnExecutionRole",
             assumed_by=iam.ServicePrincipal("states.amazonaws.com"),
         )
+        fns = [self.collect_context_fn, self.run_rca_fn, self.create_ticket_fn, self.propose_fix_fn,
+               self.parse_verification_fn, self.mark_needs_human_fn, self.notify_fn]
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=["lambda:InvokeFunction"],
-                resources=["*"],
+                resources=[f.function_arn for f in fns] + [f"{f.function_arn}:*" for f in fns],
             )
         )
         role.add_to_policy(
             iam.PolicyStatement(
-                actions=[
-                    "codebuild:StartBuild",
-                    "codebuild:StopBuild",
-                    "codebuild:BatchGetBuilds",
-                    "codebuild:BatchGetReports",
-                ],
-                resources=["*"],
+                actions=["codebuild:StartBuild", "codebuild:StopBuild", "codebuild:BatchGetBuilds"],
+                resources=[self.verify_project.project_arn],
             )
         )
+        # Managed rule Step Functions creates for codebuild:startBuild.sync
         role.add_to_policy(
             iam.PolicyStatement(
-                actions=[
-                    "events:PutTargets",
-                    "events:PutRule",
-                    "events:DescribeRule",
+                actions=["events:PutTargets", "events:PutRule", "events:DescribeRule"],
+                resources=[
+                    f"arn:aws:events:{self.region}:{self.account}:rule/StepFunctionsGetEventsForCodeBuildStartBuildRule"
                 ],
-                resources=["*"],
             )
         )
         return role

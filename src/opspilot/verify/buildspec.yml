@@ -1,23 +1,44 @@
 version: 0.2
 
+# Two-phase verification. Phase markers are exported so the ParseVerification
+# Lambda can tell "bad repro test" from "fix breaks the suite" from infra errors.
+env:
+  shell: bash
+  exported-variables:
+    - REPRO_FAILS_ON_BASE
+    - SUITE_PASSES_ON_FIX
+    - FAILURE_REASON
+
 phases:
   install:
     runtime-versions:
       python: 3.12
     commands:
-      - pip install -r requirements.txt || pip install pytest fastapi mangum httpx pydantic boto3
+      - export REPRO_FAILS_ON_BASE=false SUITE_PASSES_ON_FIX=false FAILURE_REASON=install_failed
+      - pip install -r sample_service/requirements.txt pytest httpx
   build:
     commands:
-      - echo "=== Phase 1: Verify repro test FAILS on base ($BASE_REF) ==="
-      - git checkout $BASE_REF
+      - export FAILURE_REASON=""
+      - FIX_SHA=$(git rev-parse HEAD)
+      - echo "=== Phase 1: repro test must FAIL on base ($BASE_REF) ==="
+      # The repro test only exists on the fix branch: carry it over to the base checkout.
+      - cp "$REPRO_TEST" /tmp/repro_test.py
+      - git fetch --no-tags origin "$BASE_REF"
+      - git checkout --quiet FETCH_HEAD
+      - mkdir -p "$(dirname "$REPRO_TEST")" && cp /tmp/repro_test.py "$REPRO_TEST"
       - |
-        if pytest $REPRO_TEST; then
-          echo "ERROR: Repro test passed on base! A valid reproduction test must fail on base."
-          exit 1
+        set +e; python -m pytest -q "$REPRO_TEST"; rc=$?; set -e
+        # pytest exit code 1 == tests ran and failed. 0 == passed (invalid repro);
+        # 2-5 == collection/usage errors, which must NOT count as "fails on base".
+        if [ "$rc" -eq 1 ]; then
+          export REPRO_FAILS_ON_BASE=true
+        elif [ "$rc" -eq 0 ]; then
+          export FAILURE_REASON=bad_repro_passes_on_base; exit 1
         else
-          echo "repro_fails_on_base=true"
+          export FAILURE_REASON=repro_error_on_base_rc_$rc; exit 1
         fi
-      - echo "=== Phase 2: Verify test suite PASSES on fix branch ==="
-      - git checkout -
-      - pytest
-      - echo "suite_passes_on_fix=true"
+      - echo "=== Phase 2: full suite must PASS on fix ($FIX_SHA) ==="
+      - git checkout --quiet --force "$FIX_SHA"
+      - |
+        set +e; python -m pytest -q sample_service/tests; rc=$?; set -e
+        if [ "$rc" -eq 0 ]; then export SUITE_PASSES_ON_FIX=true; else export FAILURE_REASON=suite_fails_on_fix; exit 1; fi
