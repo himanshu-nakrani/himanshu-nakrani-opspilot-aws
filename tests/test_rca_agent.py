@@ -81,7 +81,7 @@ def test_rca_abstains_when_no_stack_trace():
 
 
 def test_evidence_grounding_penalty():
-    """Unverifiable evidence references reduce confidence to at most 0.4."""
+    """Unverifiable evidence references make the RCA abstain (never routes to a PR)."""
     bundle = _create_sample_bundle(with_error=True)
     bogus_submission = {
         "incident_id": bundle.incident_id,
@@ -97,7 +97,8 @@ def test_evidence_grounding_penalty():
     }
 
     rca, issues = validate_and_ground_rca(bundle, bogus_submission)
-    assert any("Ungrounded" in iss for iss in issues)
+    assert any("log-99999" in iss for iss in issues)
+    assert rca.classification == "insufficient_evidence"
     assert rca.confidence <= 0.4
 
 

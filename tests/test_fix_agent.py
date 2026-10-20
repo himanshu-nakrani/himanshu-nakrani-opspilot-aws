@@ -39,7 +39,9 @@ def test_propose_fix_creates_pr_ref(sample_inputs, monkeypatch, tmp_path):
     rca, ticket = sample_inputs
     monkeypatch.setenv("GITHUB_REPO", "himanshu-nakrani/opspilot-aws-poc")
 
-    # Run propose_fix using tmp_path as repo_root
+    import opspilot.fix.agent as fa
+    for name in ("checkout_or_create_branch", "apply_patch", "commit_changes"):
+        monkeypatch.setattr(fa, name, lambda *a, **k: None)
     pr_ref = propose_fix(rca, ticket, repo_root=str(tmp_path))
     assert pr_ref.branch == "opspilot/OPS-42"
     assert pr_ref.base == "main"
@@ -60,3 +62,28 @@ def test_mark_needs_human(sample_inputs, monkeypatch):
     }
     result = mark_needs_human_handler(event)
     assert result["status"] == "needs_human"
+
+
+def test_propose_fix_does_not_open_pr_when_git_fails(sample_inputs, monkeypatch, tmp_path):
+    import opspilot.fix.agent as fa
+    from opspilot.fix.guardrails import PatchRejectedException
+
+    opened = []
+    monkeypatch.setattr(fa, "open_github_pr", lambda **k: opened.append(k) or (1, "u"))
+    with pytest.raises(PatchRejectedException):
+        propose_fix(sample_inputs[0], sample_inputs[1], repo_root=str(tmp_path))  # not a git repo
+    assert opened == []
+
+
+def test_propose_fix_refuses_unsupported_location(sample_inputs, monkeypatch, tmp_path):
+    import opspilot.fix.agent as fa
+    from opspilot.fix.guardrails import PatchRejectedException
+
+    rca, ticket = sample_inputs
+    other = rca.model_copy(update={"suspected_location": SuspectedLocation(file="payments/handler.py", line=12, function="charge")})
+    monkeypatch.setattr(fa, "open_github_pr", lambda **k: pytest.fail("PR must not be opened"))
+    with pytest.raises(PatchRejectedException):
+        propose_fix(other, ticket, repo_root=str(tmp_path))
+    for cls in ("config_regression", "dependency"):
+        with pytest.raises(PatchRejectedException):
+            propose_fix(rca.model_copy(update={"classification": cls}), ticket, repo_root=str(tmp_path))

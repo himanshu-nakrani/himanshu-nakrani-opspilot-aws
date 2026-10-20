@@ -141,97 +141,24 @@ class AgentCorePolicy:
 
         If ungrounded references are detected, drops confidence to <= 0.40.
         """
-        if isinstance(rca_candidate, dict):
-            raw = dict(rca_candidate)
-        else:
-            raw = rca_candidate.model_dump()
+        from opspilot.rca.grounding import ground_rca
 
-        valid_log_ids = {l.id for l in bundle.log_lines}
-        valid_commit_shas = {c.get("commit", "") for c in bundle.recent_commits if isinstance(c, dict)}
-        valid_frames = []
-        if bundle.stack_trace:
-            for fr in bundle.stack_trace.frames:
-                valid_frames.append(f"{fr.file}:{fr.line}")
-                valid_frames.append(fr.file)
-
-        issues: List[str] = []
-        evidence_items = raw.get("evidence", [])
-
-        for idx, ev in enumerate(evidence_items):
-            kind = ev.get("kind")
-            ref = str(ev.get("ref", ""))
-
-            if kind == "log_line":
-                if ref not in valid_log_ids and not any(ref in l.message for l in bundle.log_lines):
-                    issues.append(f"Ungrounded log_line ref '{ref}' not found in bundle logs")
-            elif kind == "stack_frame":
-                if not any(fr in ref or ref in fr for fr in valid_frames):
-                    issues.append(f"Ungrounded stack_frame ref '{ref}' not in parsed stack trace")
-            elif kind == "commit":
-                if ref not in valid_commit_shas and not any(ref.startswith(s) for s in valid_commit_shas if s):
-                    issues.append(f"Ungrounded commit ref '{ref}' not in recent commits")
-
-        confidence = float(raw.get("confidence", 0.5))
+        rca_result, issues = ground_rca(bundle, rca_candidate)
         if issues:
             self.log_violation("evidence_grounding", "Ungrounded evidence references detected", {"issues": issues})
-            confidence = min(confidence, self.grounding_penalty_threshold)
-            raw["confidence"] = confidence
-
-        # Build clean validated RcaResult
-        ev_objs = [EvidenceItem(**item) for item in raw.get("evidence", [])]
-        suspected_loc = None
-        if raw.get("suspected_location"):
-            suspected_loc = SuspectedLocation(**raw["suspected_location"])
-
-        rca_result = RcaResult(
-            incident_id=raw.get("incident_id", bundle.incident_id),
-            classification=raw.get("classification", "insufficient_evidence"),
-            severity=raw.get("severity", "sev3"),
-            confidence=confidence,
-            summary=raw.get("summary", "Analysis completed."),
-            suspected_location=suspected_loc,
-            evidence=ev_objs,
-            ruled_out=raw.get("ruled_out", []),
-            suggested_fix_strategy=raw.get("suggested_fix_strategy", ""),
-        )
-
         return rca_result, issues
 
     def enforce_abstention_policy(self, bundle: ContextBundle, rca: RcaResult) -> RcaResult:
         """Enforce abstention rule: if evidence is missing/inconclusive, force insufficient_evidence."""
-        has_fatal_trace = bool(bundle.stack_trace and bundle.stack_trace.frames)
-        full_logs = " ".join(l.message for l in bundle.log_lines).lower()
-        has_clear_error = any(
-            kw in full_logs
-            for kw in [
-                "attributeerror",
-                "typeerror",
-                "keyerror",
-                "memoryerror",
-                "valueerror",
-                "connection pool",
-                "out of memory",
-                "oom",
-                "killed",
-                "timeout",
-                "gateway",
-                "503",
-                "config",
-                "env",
-                "invalid port",
-            ]
-        )
+        # Re-run the shared grounding rules. The old keyword list ("env", "config", "503"...)
+        # let routine log lines count as evidence, so it is gone.
+        from opspilot.rca.grounding import ground_rca
 
-        if not has_fatal_trace and not has_clear_error:
-            if rca.classification != "insufficient_evidence" or rca.confidence > 0.40:
-                self.log_violation(
-                    "abstention_policy",
-                    "Overconfident classification without fatal error; enforcing abstention",
-                    {"prior_classification": rca.classification, "prior_confidence": rca.confidence},
-                )
-                rca.classification = "insufficient_evidence"
-                rca.confidence = min(rca.confidence, 0.35)
-                rca.severity = "sev4"
-                rca.summary = f"Insufficient evidence: {rca.summary}"
-
-        return rca
+        grounded, issues = ground_rca(bundle, rca)
+        if issues:
+            self.log_violation(
+                "abstention_policy",
+                "RCA not supported by grounded evidence; enforcing abstention",
+                {"prior_classification": rca.classification, "prior_confidence": rca.confidence, "issues": issues},
+            )
+        return grounded

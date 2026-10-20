@@ -144,9 +144,19 @@ class AgentCoreGateway:
         policy: Optional[AgentCorePolicy] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        active_policy = policy or self.policy
-        rca_result, issues = active_policy.enforce_evidence_grounding(bundle, args)
-        rca_result = active_policy.enforce_abstention_policy(bundle, rca_result)
+        from pydantic import ValidationError
+
+        from opspilot.rca.grounding import ground_rca
+
+        if memory and memory.submitted_rca:
+            return {"status": "rejected", "error": "submit_rca was already called; the first submission is final."}
+        try:
+            rca_result, issues = ground_rca(bundle, args)
+        except ValidationError as e:
+            # Not recorded: the model may fix the payload and call submit_rca again.
+            return {"status": "validation_error", "error": str(e)[:1500]}
+        if issues:
+            (policy or self.policy).log_violation("evidence_grounding", "Ungrounded RCA; abstained", {"issues": issues})
 
         if memory:
             memory.record_submitted_rca(rca_result)
@@ -175,6 +185,10 @@ class AgentCoreGateway:
             raise KeyError(f"Tool '{name}' not found in AgentCore Gateway registry.")
 
         entry = self.registry[name]
+        budget = kwargs.pop("max_tool_calls", None)
+        if budget is not None and memory is not None and name != "submit_rca":
+            if len(memory.tool_invocation_history) >= budget:
+                return {"error": f"Tool budget of {budget} calls exhausted. Call submit_rca now."}
         start_t = time.perf_counter()
         status = "success"
         try:
@@ -195,6 +209,7 @@ class AgentCoreGateway:
         memory: Optional[AgentCoreMemory] = None,
         policy: Optional[AgentCorePolicy] = None,
         repo_root: Optional[str] = None,
+        max_tool_calls: Optional[int] = None,
     ) -> List[Any]:
         """Generate AWS Strands @tool decorated callables bound to the current context."""
         gateway = self
@@ -208,7 +223,7 @@ class AgentCoreGateway:
                 pattern: Keyword or substring to find in logs
                 limit: Maximum matching lines to return (default 20)
             """
-            res = gateway.execute_tool("query_logs", {"pattern": pattern, "limit": limit}, bundle, memory, active_policy, repo_root=repo_root)
+            res = gateway.execute_tool("query_logs", {"pattern": pattern, "limit": limit}, bundle, memory, active_policy, repo_root=repo_root, max_tool_calls=max_tool_calls)
             return json.dumps(res)
 
         @tool
@@ -220,7 +235,7 @@ class AgentCoreGateway:
                 start_line: First line to read (1-indexed)
                 end_line: Last line to read (inclusive)
             """
-            res = gateway.execute_tool("get_file", {"path": path, "start_line": start_line, "end_line": end_line}, bundle, memory, active_policy, repo_root=repo_root)
+            res = gateway.execute_tool("get_file", {"path": path, "start_line": start_line, "end_line": end_line}, bundle, memory, active_policy, repo_root=repo_root, max_tool_calls=max_tool_calls)
             return json.dumps(res)
 
         @tool
@@ -230,7 +245,7 @@ class AgentCoreGateway:
             Args:
                 commit_sha: The commit SHA to inspect
             """
-            res = gateway.execute_tool("get_commit_diff", {"commit_sha": commit_sha}, bundle, memory, active_policy, repo_root=repo_root)
+            res = gateway.execute_tool("get_commit_diff", {"commit_sha": commit_sha}, bundle, memory, active_policy, repo_root=repo_root, max_tool_calls=max_tool_calls)
             return json.dumps(res)
 
         @tool
@@ -269,7 +284,7 @@ class AgentCoreGateway:
                 "suspected_location": suspected_location,
                 "ruled_out": ruled_out or [],
             }
-            res = gateway.execute_tool("submit_rca", submission, bundle, memory, active_policy, repo_root=repo_root)
+            res = gateway.execute_tool("submit_rca", submission, bundle, memory, active_policy, repo_root=repo_root, max_tool_calls=max_tool_calls)
             return json.dumps(res)
 
         return [query_logs, get_file, get_commit_diff, submit_rca]

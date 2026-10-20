@@ -10,22 +10,34 @@ from opspilot.contracts import RcaResult
 RouteTarget = Literal["propose_fix", "notify"]
 
 
-def determine_route(classification: str, confidence: float, threshold: float = 0.6) -> RouteTarget:
-    """Evaluate classification and confidence against safety threshold.
+# Classes the fix agent can actually patch today. config_regression has no revert agent
+# yet, so it files a ticket and notifies instead of opening a PR it cannot verify.
+FIXABLE_CLASSES = ("code_defect",)
 
-    Rules from ARCHITECTURE.md:
-    - code_defect (confidence >= 0.6) -> propose_fix
-    - config_regression (confidence >= 0.6) -> propose_fix
-    - dependency -> notify (never opens PR)
-    - resource -> notify (never opens PR)
-    - insufficient_evidence -> notify (never opens PR)
-    - confidence < threshold -> notify (never opens PR)
+
+def determine_route(classification: str, confidence: float, threshold: float = 0.6) -> RouteTarget:
+    """Route on classification and confidence alone (used by the Step Functions Choice).
+
+    - code_defect with confidence >= threshold -> propose_fix
+    - everything else (config_regression, dependency, resource, insufficient_evidence,
+      or low confidence) -> notify, never a PR
     """
-    if classification in ("code_defect", "config_regression") and confidence >= threshold:
+    if classification in FIXABLE_CLASSES and confidence >= threshold:
         return "propose_fix"
     return "notify"
 
 
 def route_rca(rca: RcaResult, threshold: float = 0.6) -> RouteTarget:
-    """Convenience helper accepting RcaResult model."""
-    return determine_route(rca.classification, rca.confidence, threshold=threshold)
+    """Route an RcaResult. A PR also needs checkable evidence, not just model confidence:
+    a suspected_location and at least one stack_frame evidence item that names it.
+    (Bundle-level grounding already ran in opspilot.rca.grounding before this point.)
+    """
+    if determine_route(rca.classification, rca.confidence, threshold) != "propose_fix":
+        return "notify"
+    loc = rca.suspected_location
+    if loc is None:
+        return "notify"
+    loc_ref = f"{loc.file}:{loc.line}"
+    if not any(e.kind == "stack_frame" and e.ref.strip() == loc_ref for e in rca.evidence):
+        return "notify"
+    return "propose_fix"

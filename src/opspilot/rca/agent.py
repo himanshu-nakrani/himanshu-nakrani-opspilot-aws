@@ -8,6 +8,10 @@ import boto3
 from botocore.exceptions import ClientError
 
 from opspilot.contracts import ContextBundle, EvidenceItem, IncidentEvent, RcaResult, SuspectedLocation
+from pydantic import ValidationError
+
+from opspilot.rca.grounding import abstain
+from opspilot.rca.prompts import SYSTEM_PROMPT, build_user_prompt
 from opspilot.rca.strands_agent import run_strands_rca
 from opspilot.rca.tools import (
     RCA_TOOL_CONFIG,
@@ -20,25 +24,25 @@ from opspilot.rca.tools import (
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-SYSTEM_PROMPT = """You are OpsPilot's expert Root Cause Analysis (RCA) SRE agent.
-Analyze the provided incident context and use the available inspection tools to pinpoint the root cause.
+DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
-Rules:
-1. Ground every claim in concrete evidence from the logs, code, or commits.
-2. Every evidence[].ref must resolve to an exact log line id (e.g. log-1), file:line (e.g. sample_service/app.py:29), or commit SHA.
-3. If evidence is missing, noisy, or inconclusive (such as absence of a clear stack trace or faulting line), you MUST abstain by returning classification: "insufficient_evidence" and confidence <= 0.4. Never invent or guess causes.
-4. Issue types:
-   - "code_defect": Unhandled exception, logic bug, missing null check, off-by-one.
-   - "config_regression": Invalid env var, typo in configuration, bad port or URL.
-   - "dependency": Third-party API failure, payment gateway timeout, external HTTP 5xx.
-   - "resource": Database connection pool exhaustion, memory limit / OOM, disk full.
-   - "insufficient_evidence": Weak or absent evidence, log truncation, normal operational logs.
-5. When your investigation is complete, call the "submit_rca" tool to return your final structured result.
-"""
+
+def resolve_model_id(model_id: Optional[str] = None) -> str:
+    """Model comes from the caller or BEDROCK_MODEL_ID; the default is only a placeholder."""
+    return model_id or os.environ.get("BEDROCK_MODEL_ID") or DEFAULT_MODEL_ID
+
+
+def _live_aws_enabled() -> bool:
+    key = os.environ.get("AWS_ACCESS_KEY_ID")
+    return bool(os.environ.get("OPSPILOT_LIVE") == "1" or (key and key != "testing"))
 
 
 def analyze_heuristically(bundle: ContextBundle) -> RcaResult:
-    """Deterministic RCA analysis fallback when Bedrock is offline or for test fixtures."""
+    """Offline-only keyword heuristic for local demos without AWS credentials.
+
+    It is never used as a fallback for a failed live run (a failed run abstains instead),
+    and its confidence is capped below the routing threshold so it can never open a PR.
+    """
     st = bundle.stack_trace
     log_refs = [l.id for l in bundle.log_lines]
     primary_log_ref = log_refs[0] if log_refs else "none"
@@ -51,7 +55,7 @@ def analyze_heuristically(bundle: ContextBundle) -> RcaResult:
                 incident_id=bundle.incident_id,
                 classification="resource",
                 severity="sev1",
-                confidence=0.85,
+                confidence=0.5,
                 summary="Resource exhaustion detected (memory or database connection pool limit reached).",
                 evidence=[EvidenceItem(kind="log_line", ref=primary_log_ref, claim="Resource limit error in logs")],
                 suggested_fix_strategy="Increase resource limits or tune pool size and concurrency.",
@@ -61,7 +65,7 @@ def analyze_heuristically(bundle: ContextBundle) -> RcaResult:
                 incident_id=bundle.incident_id,
                 classification="dependency",
                 severity="sev2",
-                confidence=0.85,
+                confidence=0.5,
                 summary="Downstream service failure or network timeout detected in logs.",
                 evidence=[EvidenceItem(kind="log_line", ref=primary_log_ref, claim="Timeout / 503 log message detected")],
                 suggested_fix_strategy="Implement retry policy with exponential backoff and circuit breaker.",
@@ -71,7 +75,7 @@ def analyze_heuristically(bundle: ContextBundle) -> RcaResult:
                 incident_id=bundle.incident_id,
                 classification="config_regression",
                 severity="sev2",
-                confidence=0.85,
+                confidence=0.5,
                 summary="Configuration regression or invalid environment variable setting.",
                 evidence=[EvidenceItem(kind="log_line", ref=primary_log_ref, claim="Configuration error detected")],
                 suggested_fix_strategy="Revert recent configuration change or set required environment variable.",
@@ -92,7 +96,7 @@ def analyze_heuristically(bundle: ContextBundle) -> RcaResult:
 
     summary = (
         f"Unhandled {st.error_type} in {top_frame.file}:{top_frame.line} in {top_frame.function}(): "
-        f"{st.error_message}. Missing null check on order lookup."
+        f"{st.error_message}. Offline heuristic only; not reviewed by a model."
     )
     if len(summary) > 600:
         summary = summary[:597] + "..."
@@ -101,7 +105,8 @@ def analyze_heuristically(bundle: ContextBundle) -> RcaResult:
         incident_id=bundle.incident_id,
         classification="code_defect",
         severity="sev2",
-        confidence=0.92,
+        # Below the 0.6 routing threshold: a keyword heuristic must never open a PR.
+        confidence=0.5,
         summary=summary,
         suspected_location=SuspectedLocation(
             file=top_frame.file,
@@ -113,7 +118,7 @@ def analyze_heuristically(bundle: ContextBundle) -> RcaResult:
             EvidenceItem(kind="stack_frame", ref=ref_location, claim=f"Exception raised in {top_frame.function}"),
         ],
         ruled_out=["dependency", "resource"],
-        suggested_fix_strategy="Add validation for missing order ID and return HTTP 404 HTTPException if not found.",
+        suggested_fix_strategy=f"Inspect {top_frame.function}() at {ref_location} for the unhandled {st.error_type}.",
     )
 
 
@@ -126,8 +131,9 @@ def run_rca_agent(
     use_strands: bool = True,
 ) -> RcaResult:
     """Run Bedrock Converse tool-use loop or AWS Strands + AgentCore Runtime."""
-    if not model_id:
-        model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
+    model_id = resolve_model_id(model_id)
+    if os.environ.get("OPSPILOT_AGENT_BACKEND", "").lower() == "converse":
+        use_strands = False
 
     # If explicit bedrock_client passed (e.g. mock in unit tests), use Converse loop
     if bedrock_client is not None:
@@ -140,29 +146,12 @@ def run_rca_agent(
             repo_root=repo_root,
         )
     else:
-        use_live_bedrock = bool(os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_ACCESS_KEY_ID") != "testing")
-        if not use_live_bedrock:
+        if not _live_aws_enabled():
             return analyze_heuristically(bundle)
         client = boto3.client("bedrock-runtime")
 
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "text": (
-                        f"Please analyze incident {bundle.incident_id} for service {bundle.service}.\n\n"
-                        f"Detected at: {bundle.detected_at}\n"
-                        f"Log group: {bundle.log_group}\n"
-                        f"Log lines count: {len(bundle.log_lines)}\n"
-                        f"Stack trace present: {bool(bundle.stack_trace)}\n"
-                        f"Repo files available: {list(bundle.repo_files.keys())}\n\n"
-                        "Use the available tools to investigate and then call submit_rca."
-                    )
-                }
-            ],
-        }
-    ]
+    messages = [{"role": "user", "content": [{"text": build_user_prompt(bundle)}]}]
+    repair_attempts = 0
 
     for turn in range(max_turns):
         try:
@@ -173,11 +162,14 @@ def run_rca_agent(
                 toolConfig=RCA_TOOL_CONFIG,
             )
         except Exception as e:
-            logger.warning("Bedrock converse call failed on turn %d: %s. Falling back to heuristic.", turn, e)
-            return analyze_heuristically(bundle)
+            logger.error("Bedrock converse call failed on turn %d: %s. Abstaining.", turn, e)
+            return abstain(bundle, f"RCA model call failed ({type(e).__name__}); no analysis was produced.")
 
         stop_reason = resp.get("stopReason")
-        output_msg = resp.get("output", {}).get("message", {})
+        output_msg = (resp.get("output") or {}).get("message") or {}
+        if not output_msg.get("content"):
+            logger.error("Bedrock returned no message content (stopReason=%s). Abstaining.", stop_reason)
+            return abstain(bundle, f"RCA model returned an empty response (stopReason={stop_reason}).")
         messages.append(output_msg)
 
         if stop_reason == "tool_use":
@@ -190,12 +182,16 @@ def run_rca_agent(
                 tool_input = req.get("input", {})
 
                 if tool_name == "submit_rca":
+                    if not isinstance(tool_input, dict):
+                        tool_input = {}
                     try:
                         rca, issues = validate_and_ground_rca(bundle, tool_input)
                         logger.info("submit_rca received and validated. Issues: %s", issues)
                         return rca
-                    except Exception as val_err:
-                        # Attempt one repair retry inside the loop
+                    except ValidationError as val_err:
+                        repair_attempts += 1
+                        if repair_attempts > 1:
+                            return abstain(bundle, "RCA model output did not match the RcaResult contract after one repair attempt.")
                         tool_results.append(
                             {
                                 "toolResult": {
@@ -207,8 +203,10 @@ def run_rca_agent(
                         )
                         continue
 
+                if not isinstance(tool_input, dict):
+                    result = {"error": "tool input must be a JSON object"}
                 elif tool_name == "query_logs":
-                    result = execute_query_logs(bundle, tool_input.get("pattern", ""), tool_input.get("limit", 20))
+                    result = execute_query_logs(bundle, str(tool_input.get("pattern", "")), min(int(tool_input.get("limit", 20) or 20), 50))
                 elif tool_name == "get_file":
                     result = execute_get_file(
                         bundle,
@@ -233,6 +231,9 @@ def run_rca_agent(
 
             messages.append({"role": "user", "content": tool_results})
 
+        elif stop_reason in ("max_tokens", "guardrail_intervened", "content_filtered"):
+            logger.error("Bedrock stopped with %s before submit_rca. Abstaining.", stop_reason)
+            return abstain(bundle, f"RCA model stopped early ({stop_reason}) without submitting a result.")
         elif stop_reason == "end_turn":
             # Bedrock finished turn without calling submit_rca; prompt it to submit
             messages.append(
@@ -242,8 +243,8 @@ def run_rca_agent(
                 }
             )
 
-    logger.warning("RCA agent reached max turns without valid submit_rca. Using heuristic fallback.")
-    return analyze_heuristically(bundle)
+    logger.warning("RCA agent reached max turns (%d) without a valid submit_rca. Abstaining.", max_turns)
+    return abstain(bundle, f"RCA model did not submit a result within {max_turns} turns.")
 
 
 def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, Any]:
