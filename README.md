@@ -14,7 +14,7 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 | M2 Context collector + RCA agent (Bedrock, structured output) | ✅ done |
 | M3 Classifier/router + Jira ticket | ✅ done |
 | M4 Patch agent → branch + PR with reproduction test | ✅ done |
-| M5 CodeBuild verification + notification | ⏳ |
+| M5 CodeBuild verification + notification | ✅ done |
 | M6 Offline eval harness (replay fixtures) | ⏳ |
 
 ## Repo map
