@@ -3,7 +3,7 @@
   "name": "Missing DATABASE_URL environment variable",
   "gold": {
     "classification": "config_regression",
-    "route": "propose_fix",
+    "route": "notify",
     "should_abstain": false
   },
   "context_bundle": {

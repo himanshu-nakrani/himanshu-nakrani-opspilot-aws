@@ -30,8 +30,27 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 4. **Least privilege.** The LLM gets no AWS write permissions. The GitHub token can only write to `opspilot/*` branches on the one target repo. Branch protection requires a human review before merge.
 5. **The model is configurable** (`BEDROCK_MODEL_ID`). The plan named Claude 3.5 Sonnet. Pick the current Claude Sonnet model or inference profile available in your Bedrock region.
 
-## Agent Stack: AWS Strands Agents SDK + Amazon Bedrock AgentCore
-OpsPilot is built using AWS's modern agentic architecture:
+## Agent Stack: AWS Strands Agents SDK + AgentCore-style components
+> **Honesty note:** the agent loop uses the real Strands SDK (`strands-agents`) and Bedrock.
+> The "AgentCore" Runtime/Gateway/Policy/Memory classes are **local Python modules modelled on
+> Amazon Bedrock AgentCore concepts**. They do not call the AgentCore service, MCP or any AgentCore
+> AWS resource. Swap in the real AgentCore SDK only if you need long sessions or cross-incident memory.
+
+### RCA safety rules (enforced in code)
+- Every RCA from any path goes through `opspilot.rca.grounding.ground_rca`. Evidence refs must match
+  the context bundle exactly (log ids, stack-trace `file:line`, commit SHAs). Any fabricated ref, or a
+  `code_defect` without a grounded stack frame/commit, makes the result **abstain** (`insufficient_evidence`).
+- Bedrock errors, empty/`max_tokens` responses, malformed output after one repair, or no `submit_rca`
+  within `max_turns` all **abstain**. The keyword heuristic is offline-only and capped below the PR threshold.
+- A PR needs `code_defect` + confidence ≥ 0.6 + a `suspected_location` backed by matching stack-frame evidence.
+  `config_regression` files a ticket and notifies until a revert agent exists.
+- The fix agent refuses anything but the planted sample bug, and never opens a PR if a git step fails.
+- Model tools are sandboxed: `get_file` stays inside the repo (no absolute paths, `..`, `.git/`, `.env*`);
+  `get_commit_diff` only accepts hex SHAs. Logs/code/commits reach the model inside `<untrusted_*>` tags.
+- `BEDROCK_MODEL_ID` and `AWS_REGION` are read from the environment; set `OPSPILOT_AGENT_BACKEND=converse`
+  to use the plain Converse loop instead of Strands.
+
+Component overview:
 - **AWS Strands Agents SDK (`strands-agents`):** Model-first agent execution loop (`strands.Agent`, `@tool` decorators, streaming events, multi-turn reasoning).
 - **Amazon Bedrock AgentCore Architecture:**
   - **AgentCore Runtime:** Serverless agent execution environment, session isolation, task handoff, and CloudWatch EMF telemetry (`OpsPilot/AgentCore`).
@@ -61,7 +80,7 @@ make build-frontend
 - **Root Cause & Grounded Evidence Inspector:** View full RCA summaries, pinpointed source file:line locations, suggested fix strategies, and validated citations (log IDs, stack trace frames, git commits).
 - **Interactive Unified Patch Diff Viewer:** Syntax-highlighted git diff display with additions (`+`), deletions (`-`), and hunk headers.
 - **One-Click Incident Simulation (M1):** Trigger the planted missing-order bug on `sample-service`, observe CloudWatch metric filter thresholds, alarm state transitions, DynamoDB 15-minute dedup verification, and automated patch creation.
-- **M6 Benchmark Evaluation Suite:** Execute and review live replays of the 10 golden historical incident fixtures with accuracy metrics and routing verdicts.
+- **M6 Benchmark Evaluation Suite:** Replays the 10 fixtures through the scripted offline model. These scores check the plumbing, not model quality; a live-model eval mode is still to do.
 - **AWS Strands & Bedrock AgentCore Inspector:** Live panel displaying active AgentCore policies (blast radius, protected paths, evidence grounding, abstention) and Gateway tools (`query_logs`, `get_file`, `get_commit_diff`, `submit_rca`).
 
 - **API Endpoints:**

@@ -3,7 +3,7 @@
   "name": "Typo in port configuration string",
   "gold": {
     "classification": "config_regression",
-    "route": "propose_fix",
+    "route": "notify",
     "should_abstain": false
   },
   "context_bundle": {

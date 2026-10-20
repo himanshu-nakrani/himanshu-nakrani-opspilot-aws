@@ -19,7 +19,27 @@ from opspilot.fix.git_ops import (
     mark_pr_needs_human,
     open_github_pr,
 )
-from opspilot.fix.guardrails import validate_patch_limits
+from opspilot.fix.guardrails import PatchRejectedException, validate_patch_limits
+
+# The POC has exactly one fix template: the planted missing-order bug in the sample service.
+# Anything else is refused (Step Functions catches PatchRejected and notifies a human)
+# rather than shipping the same template patch for an unrelated incident.
+SUPPORTED_FIX_FILE = "sample_service/app.py"
+SUPPORTED_FIX_FUNCTION = "get_order"
+
+
+def ensure_supported_fix(rca: RcaResult) -> None:
+    """Raise PatchRejectedException unless this RCA matches the one patch we can generate."""
+    if rca.classification != "code_defect":
+        raise PatchRejectedException(f"No automated fix for classification {rca.classification!r}")
+    loc = rca.suspected_location
+    if loc is None:
+        raise PatchRejectedException("RCA has no suspected_location; refusing to guess a patch")
+    if loc.file != SUPPORTED_FIX_FILE or (loc.function and loc.function != SUPPORTED_FIX_FUNCTION):
+        raise PatchRejectedException(
+            f"No fix generator for {loc.file}:{loc.line} ({loc.function}); "
+            "the POC only patches the planted missing-order bug. Needs a human."
+        )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -82,6 +102,7 @@ def propose_fix(
     if not repo_root:
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
+    ensure_supported_fix(rca)
     repro_code, test_path, patch_diff = generate_repro_test_and_patch(rca, ticket_ref, repo_root)
 
     # 1. Enforce patch limits (max 3 files, max 80 lines, no CI/IaC modifications)
@@ -109,7 +130,10 @@ def propose_fix(
         commit_msg = f"[OpsPilot] Fix for {ticket_ref.key}: {rca.summary[:60]}"
         commit_changes(repo_root, commit_msg)
     except Exception as e:
-        logger.warning("Local git branch/commit operation in propose_fix: %s", e)
+        # Never open a PR for a branch we failed to build: there would be nothing (or the
+        # wrong thing) on it, and CodeBuild would "verify" an unchanged tree.
+        logger.error("Git branch/patch/commit failed in propose_fix; not opening a PR: %s", e)
+        raise PatchRejectedException(f"Could not prepare fix branch {branch_name}: {e}") from e
 
     # 3. Create GitHub Pull Request
     repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws")

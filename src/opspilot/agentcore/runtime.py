@@ -20,18 +20,12 @@ from opspilot.contracts import ContextBundle, EvidenceItem, RcaResult, Suspected
 from opspilot.agentcore.gateway import AgentCoreGateway
 from opspilot.agentcore.memory import AgentCoreMemory
 from opspilot.agentcore.policy import AgentCorePolicy
+from opspilot.rca.grounding import abstain, ground_rca
+from opspilot.rca.prompts import SYSTEM_PROMPT, build_user_prompt
 
 logger = logging.getLogger(__name__)
 
-AGENTCORE_SYSTEM_PROMPT = """You are OpsPilot's autonomous Root Cause Analysis SRE agent, running on AWS Strands Agents SDK and Amazon Bedrock AgentCore.
-Analyze the incident context and use available tools to investigate.
-
-Rules:
-1. Ground every claim in concrete evidence from logs, code, or commits.
-2. Every evidence[].ref must resolve to an exact log line id (e.g. log-1), file:line (e.g. sample_service/app.py:29), or commit SHA.
-3. If evidence is missing or inconclusive, abstain with classification: "insufficient_evidence" and confidence <= 0.40.
-4. When investigation is complete, call submit_rca to submit structured findings.
-"""
+AGENTCORE_SYSTEM_PROMPT = SYSTEM_PROMPT  # single shared prompt (opspilot.rca.prompts)
 
 
 class AgentCoreSession:
@@ -234,11 +228,11 @@ class AgentCoreOfflineModel(Model):
 class AgentCoreRuntime:
     """Amazon Bedrock AgentCore Runtime execution engine."""
 
-    def __init__(self, default_model_id: Optional[str] = None, region_name: str = "us-east-1"):
-        self.default_model_id = default_model_id or os.environ.get(
-            "BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0"
-        )
-        self.region_name = region_name
+    def __init__(self, default_model_id: Optional[str] = None, region_name: Optional[str] = None):
+        from opspilot.rca.agent import resolve_model_id
+
+        self.default_model_id = resolve_model_id(default_model_id)
+        self.region_name = region_name or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 
     def create_session(
         self,
@@ -257,6 +251,7 @@ class AgentCoreRuntime:
         system_prompt: Optional[str] = None,
         repo_root: Optional[str] = None,
         bedrock_client=None,
+        max_tool_calls: Optional[int] = None,
     ) -> Agent:
         """Instantiate an AWS Strands Agent wired to AgentCore Gateway and Policy."""
         tools = session.gateway.as_strands_tools(
@@ -264,26 +259,22 @@ class AgentCoreRuntime:
             memory=session.memory,
             policy=session.policy,
             repo_root=repo_root,
+            max_tool_calls=max_tool_calls,
         )
 
         sys_prompt = system_prompt or AGENTCORE_SYSTEM_PROMPT
         chosen_model_id = model_id or self.default_model_id
 
         # Determine whether to use live Bedrock or AgentCoreOfflineModel
-        use_live_aws = bool(
-            bedrock_client
-            or (
-                os.environ.get("AWS_ACCESS_KEY_ID")
-                and os.environ.get("AWS_ACCESS_KEY_ID") != "testing"
-                and os.environ.get("AWS_DEFAULT_REGION")
-            )
-        )
+        from opspilot.rca.agent import _live_aws_enabled
 
-        if use_live_aws:
+        if isinstance(bedrock_client, Model):
+            model = bedrock_client  # injected Strands model (tests, alternative providers)
+        elif bedrock_client is not None or _live_aws_enabled():
             model = BedrockModel(
                 model_id=chosen_model_id,
-                region_name=self.region_name,
-                boto_session=boto3.Session() if not bedrock_client else None,
+                boto_session=boto3.Session(region_name=self.region_name),
+                temperature=0.0,
             )
         else:
             model = AgentCoreOfflineModel(bundle=bundle)
@@ -313,60 +304,30 @@ class AgentCoreRuntime:
             model_id=model_id,
             repo_root=repo_root,
             bedrock_client=bedrock_client,
+            max_tool_calls=max_turns,
         )
 
-        prompt = (
-            f"Analyze incident {bundle.incident_id} for service {bundle.service}.\n\n"
-            f"Detected at: {bundle.detected_at}\n"
-            f"Log group: {bundle.log_group}\n"
-            f"Log lines: {len(bundle.log_lines)}\n"
-            f"Stack trace present: {bool(bundle.stack_trace)}\n"
-            f"Repo files available: {list(bundle.repo_files.keys())}\n\n"
-            "Investigate using the available tools and submit findings via submit_rca."
-        )
-
+        prompt = build_user_prompt(bundle)
         try:
             agent_result = agent(prompt)
             duration_ms = session.close()
             logger.info("AgentCore session %s completed in %.1f ms", session.session_id, duration_ms)
         except Exception as e:
             session.close()
-            logger.error("AgentCore execution error for %s: %s", bundle.incident_id, e)
-            raise
+            logger.error("Agent execution error for %s: %s", bundle.incident_id, e)
+            rca_result = abstain(bundle, f"RCA agent failed ({type(e).__name__}); no analysis was produced.")
+            self.emit_cloudwatch_metrics(session, rca_result)
+            return rca_result, session
 
         # Retrieve submitted RCA from session memory
         if session.memory.submitted_rca:
-            raw_rca = session.memory.submitted_rca
-            ev_objs = [EvidenceItem(**item) for item in raw_rca.get("evidence", [])]
-            suspected_loc = None
-            if raw_rca.get("suspected_location"):
-                suspected_loc = SuspectedLocation(**raw_rca["suspected_location"])
-
-            rca_result = RcaResult(
-                incident_id=raw_rca.get("incident_id", bundle.incident_id),
-                classification=raw_rca.get("classification", "insufficient_evidence"),
-                severity=raw_rca.get("severity", "sev3"),
-                confidence=raw_rca.get("confidence", 0.5),
-                summary=raw_rca.get("summary", "Analysis completed."),
-                suspected_location=suspected_loc,
-                evidence=ev_objs,
-                ruled_out=raw_rca.get("ruled_out", []),
-                suggested_fix_strategy=raw_rca.get("suggested_fix_strategy", ""),
-            )
+            # Already grounded by the gateway; re-check so nothing unvalidated reaches the router.
+            try:
+                rca_result, _ = ground_rca(bundle, session.memory.submitted_rca)
+            except Exception as e:  # defensive: contract drift
+                rca_result = abstain(bundle, f"Submitted RCA failed validation ({type(e).__name__}).")
         else:
-            # Fallback if tool was not called
-            rca_result = session.policy.enforce_abstention_policy(
-                bundle,
-                RcaResult(
-                    incident_id=bundle.incident_id,
-                    classification="insufficient_evidence",
-                    severity="sev4",
-                    confidence=0.30,
-                    summary="Investigation completed without conclusive findings.",
-                    evidence=[],
-                    suggested_fix_strategy="Gather additional telemetry.",
-                ),
-            )
+            rca_result = abstain(bundle, "RCA agent finished without calling submit_rca.")
 
         self.emit_cloudwatch_metrics(session, rca_result)
         return rca_result, session
