@@ -76,3 +76,62 @@ def test_evals_api():
     assert evals["classification_accuracy"] == 100.0
     assert evals["route_accuracy"] == 100.0
     assert len(evals["details"]) == 10
+
+
+# --- API contract tests: field names must match frontend/src/types.ts ---
+
+EVALS_KEYS = {
+    "total_fixtures", "passed_fixtures", "classification_correct", "route_correct",
+    "location_hits", "location_total", "abstention_hits", "abstention_total",
+    "classification_accuracy", "route_accuracy", "location_hit_rate", "abstention_precision",
+    "evidence_ref_validity_rate", "mean_tokens", "mean_latency_ms", "targets",
+    "all_targets_passed", "details",
+}
+EVAL_DETAIL_KEYS = {
+    "id", "name", "gold_classification", "predicted_classification", "gold_route",
+    "predicted_route", "confidence", "tokens", "latency_ms", "location_hit",
+    "abstention_correct", "passed",
+}
+
+
+def test_evals_contract():
+    with TestClient(dashboard_app) as client:
+        data = client.get("/api/evals").json()
+    assert EVALS_KEYS <= set(data)
+    assert data["details"], "expected fixtures"
+    for d in data["details"]:
+        assert EVAL_DETAIL_KEYS <= set(d)
+        assert isinstance(d["confidence"], float)
+        assert isinstance(d["latency_ms"], float)
+        assert isinstance(d["passed"], bool)
+    assert data["passed_fixtures"] == sum(d["passed"] for d in data["details"])
+
+
+def test_trigger_contract_and_no_fake_links():
+    with TestClient(dashboard_app) as client:
+        data = client.post("/api/trigger").json()
+        assert {"incident_id", "summary", "simulated", "ingest_mode", "ingest_status", "failed_calls", "incident"} <= set(data)
+        assert data["simulated"] is True
+        assert data["incident_id"] == data["incident"]["incident_id"]
+        assert data["incident"]["pr_url"] is None
+        assert client.get(f"/api/incidents/{data['incident_id']}").status_code == 200
+
+
+def test_stats_are_derived_not_hardcoded():
+    with TestClient(dashboard_app) as client:
+        stats = client.get("/api/stats").json()
+    rate = stats["verification_pass_rate"]
+    if stats["total_prs_opened"]:
+        assert rate == round(stats["verified_prs"] / stats["total_prs_opened"], 3)
+    else:
+        assert rate is None
+    assert stats["agentcore_policies_active"] and stats["agentcore_gateway_tools"]
+
+
+def test_cors_does_not_allow_arbitrary_origins():
+    with TestClient(dashboard_app) as client:
+        res = client.options(
+            "/api/stats",
+            headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"},
+        )
+    assert res.headers.get("access-control-allow-origin") is None

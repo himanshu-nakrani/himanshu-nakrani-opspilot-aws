@@ -1,219 +1,176 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { AlertOctagon, ChevronRight, Search } from 'lucide-react';
 import { Incident } from '../types';
-import { Search, ExternalLink, GitPullRequest, Ticket, Code2, AlertTriangle, CheckCircle, ShieldAlert } from 'lucide-react';
+import { classificationBadge, confidenceTone, severityBadge, SOURCE_LABEL, statusBadge } from '../lib/badges';
+import { formatTimestamp, humanize } from '../lib/format';
 
 interface IncidentListProps {
   incidents: Incident[];
   onSelectIncident: (incident: Incident) => void;
   isLoading: boolean;
+  error: string | null;
+  onRetry: () => void;
 }
 
-export const IncidentList: React.FC<IncidentListProps> = ({ incidents, onSelectIncident, isLoading }) => {
+const FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'code_defect', label: 'Code defect' },
+  { id: 'config_regression', label: 'Config regression' },
+  { id: 'dependency', label: 'Dependency' },
+  { id: 'resource', label: 'Resource' },
+  { id: 'insufficient_evidence', label: 'Insufficient evidence' },
+] as const;
+
+export const IncidentList: React.FC<IncidentListProps> = ({ incidents, onSelectIncident, isLoading, error, onRetry }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterClass, setFilterClass] = useState<string>('all');
 
-  const filteredIncidents = incidents.filter((inc) => {
-    const matchesSearch =
-      inc.incident_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (inc.summary || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (inc.service || '').toLowerCase().includes(searchTerm.toLowerCase());
+  const filtered = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return incidents.filter((inc) => {
+      const matchesSearch =
+        !q ||
+        inc.incident_id.toLowerCase().includes(q) ||
+        (inc.summary ?? '').toLowerCase().includes(q) ||
+        (inc.service ?? '').toLowerCase().includes(q);
+      const matchesClass = filterClass === 'all' || inc.classification === filterClass;
+      return matchesSearch && matchesClass;
+    });
+  }, [incidents, searchTerm, filterClass]);
 
-    const matchesClass = filterClass === 'all' || inc.classification === filterClass;
-    return matchesSearch && matchesClass;
-  });
-
-  const getClassificationBadge = (cls: string) => {
-    switch (cls) {
-      case 'code_defect':
-        return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
-      case 'config_regression':
-        return 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-      case 'dependency':
-        return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
-      case 'resource':
-        return 'bg-rose-500/10 text-rose-400 border-rose-500/20';
-      case 'insufficient_evidence':
-        return 'bg-slate-500/10 text-slate-400 border-slate-500/20';
-      default:
-        return 'bg-slate-800 text-slate-300 border-slate-700';
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'VERIFIED':
-        return { label: 'Verified Fix', bg: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20', icon: CheckCircle };
-      case 'PROPOSED':
-        return { label: 'PR Proposed', bg: 'bg-purple-500/10 text-purple-400 border-purple-500/20', icon: GitPullRequest };
-      case 'NEEDS_HUMAN':
-        return { label: 'Needs Human', bg: 'bg-amber-500/10 text-amber-400 border-amber-500/20', icon: AlertTriangle };
-      case 'NOTIFIED':
-        return { label: 'Notified SRE', bg: 'bg-blue-500/10 text-blue-400 border-blue-500/20', icon: ShieldAlert };
-      default:
-        return { label: status, bg: 'bg-slate-800 text-slate-300 border-slate-700', icon: AlertTriangle };
-    }
-  };
+  const hasFilter = searchTerm.trim() !== '' || filterClass !== 'all';
 
   return (
-    <section className="bg-slate-900/40 border border-slate-800/80 rounded-2xl overflow-hidden shadow-sm">
-      {/* Search & Filter Toolbar */}
-      <div className="p-4 border-b border-slate-800/80 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+    <div className="space-y-4">
+      {error && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-200">
+          <span className="flex items-center gap-2">
+            <AlertOctagon className="w-4 h-4 shrink-0" aria-hidden="true" />
+            {incidents.length > 0 ? `Showing last loaded data. ${error}` : error}
+          </span>
+          <button type="button" onClick={onRetry} className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 font-medium">
+            Retry
+          </button>
+        </div>
+      )}
+
+      <div className="flex flex-col md:flex-row gap-3 md:items-center justify-between">
+        <div className="relative flex-1 max-w-md">
+          <label htmlFor="incident-search" className="sr-only">
+            Search incidents
+          </label>
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden="true" />
           <input
-            type="text"
-            placeholder="Search by incident ID, summary, or service name..."
+            id="incident-search"
+            type="search"
+            placeholder="Search by incident ID, summary, or service"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-slate-900/80 border border-slate-700/80 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60"
+            className="w-full bg-slate-900/80 border border-slate-700 rounded-xl pl-9 pr-4 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/60"
           />
         </div>
 
-        {/* Classification Filter Chips */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
-          {[
-            { id: 'all', label: 'All Incidents' },
-            { id: 'code_defect', label: 'Code Defect' },
-            { id: 'config_regression', label: 'Config' },
-            { id: 'dependency', label: 'Dependency' },
-            { id: 'resource', label: 'Resource' },
-            { id: 'insufficient_evidence', label: 'Abstained' },
-          ].map((chip) => (
-            <button
-              key={chip.id}
-              onClick={() => setFilterClass(chip.id)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-lg whitespace-nowrap transition cursor-pointer ${
-                filterClass === chip.id
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold'
-                  : 'bg-slate-900/60 text-slate-400 hover:text-slate-200 border border-slate-800'
-              }`}
-            >
-              {chip.label}
-            </button>
-          ))}
+        <div role="group" aria-label="Filter by classification" className="flex flex-wrap gap-1.5">
+          {FILTERS.map((chip) => {
+            const active = filterClass === chip.id;
+            return (
+              <button
+                key={chip.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setFilterClass(chip.id)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${
+                  active
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                    : 'bg-slate-900/60 text-slate-300 border-slate-700 hover:text-white hover:border-slate-600'
+                }`}
+              >
+                {chip.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Incidents Table / List */}
-      <div className="divide-y divide-slate-800/60">
+      <div className="bg-slate-900/30 border border-slate-800 rounded-xl overflow-hidden">
         {isLoading && (
-          <div className="p-8 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span>Loading telemetry and recorded incidents...</span>
+          <div className="p-8 text-center text-sm text-slate-300" role="status">
+            Loading incidents…
           </div>
         )}
 
-        {!isLoading && filteredIncidents.length === 0 && (
-          <div className="p-8 text-center text-xs text-slate-400">
-            No incidents matched your query.
+        {!isLoading && filtered.length === 0 && !(error && incidents.length === 0) && (
+          <div className="p-8 text-center text-sm text-slate-300">
+            {hasFilter ? 'No incidents match your search or filter.' : 'No incidents recorded yet. Use “Simulate Incident” to create one.'}
           </div>
         )}
 
-        {!isLoading &&
-          filteredIncidents.map((inc) => {
-            const statusConfig = getStatusBadge(inc.status);
-            const StatusIcon = statusConfig.icon;
-            const confPercent = Math.round((inc.confidence || 0) * 100);
-
-            return (
-              <div
-                key={inc.incident_id}
-                onClick={() => onSelectIncident(inc)}
-                className="p-4 hover:bg-slate-800/40 transition cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-3 group"
-              >
-                <div className="space-y-1.5 max-w-3xl">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-xs font-bold text-white group-hover:text-emerald-300 transition">
-                      {inc.incident_id}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase rounded-md border ${getClassificationBadge(
-                        inc.classification
-                      )}`}
-                    >
-                      {inc.classification.replace('_', ' ')}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 text-[10px] font-medium rounded-md border flex items-center gap-1 ${statusConfig.bg}`}
-                    >
-                      <StatusIcon className="w-3 h-3" />
-                      {statusConfig.label}
-                    </span>
-                    {inc.service && (
-                      <span className="text-[11px] text-slate-500 font-mono">
-                        {inc.service}
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="text-xs text-slate-300 line-clamp-2 leading-relaxed">
-                    {inc.summary || 'Incident recorded; awaiting RCA completion.'}
-                  </p>
-
-                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 pt-0.5">
-                    {inc.suspected_location && (
-                      <span className="flex items-center gap-1 font-mono text-slate-400">
-                        <Code2 className="w-3 h-3 text-sky-400" />
-                        {inc.suspected_location.file}:{inc.suspected_location.line}
-                      </span>
-                    )}
-                    {inc.ticket_key && (
-                      <span className="flex items-center gap-1 font-mono text-blue-400">
-                        <Ticket className="w-3 h-3" />
-                        {inc.ticket_key}
-                      </span>
-                    )}
-                    {inc.pr_branch && (
-                      <span className="flex items-center gap-1 font-mono text-purple-400">
-                        <GitPullRequest className="w-3 h-3" />
-                        {inc.pr_branch}
-                      </span>
-                    )}
-                    {inc.detected_at && (
-                      <span>{new Date(inc.detected_at).toLocaleString()}</span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Confidence Bar & Action */}
-                <div className="flex items-center gap-4 self-end md:self-center shrink-0">
-                  <div className="w-24 text-right">
-                    <div className="flex items-center justify-between text-[10px] mb-1">
-                      <span className="text-slate-400">Confidence</span>
-                      <span
-                        className={`font-mono font-bold ${
-                          confPercent >= 70
-                            ? 'text-emerald-400'
-                            : confPercent >= 50
-                            ? 'text-amber-400'
-                            : 'text-slate-400'
-                        }`}
-                      >
-                        {confPercent}%
-                      </span>
+        {!isLoading && filtered.length > 0 && (
+          <ul className="divide-y divide-slate-800">
+            {filtered.map((inc) => {
+              const status = statusBadge(inc.status);
+              const StatusIcon = status.icon;
+              const pct = inc.confidence === null || inc.confidence === undefined ? null : Math.round(inc.confidence * 100);
+              const tone = confidenceTone(pct);
+              return (
+                <li key={inc.incident_id}>
+                  <button
+                    type="button"
+                    onClick={() => onSelectIncident(inc)}
+                    className="w-full text-left p-4 hover:bg-slate-800/40 transition flex items-start gap-4 group focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-400"
+                  >
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs text-slate-200">{inc.incident_id}</span>
+                        <span className={`px-2 py-0.5 text-[11px] rounded-md border ${classificationBadge(inc.classification)}`}>
+                          {humanize(inc.classification)}
+                        </span>
+                        <span className={`px-2 py-0.5 text-[11px] rounded-md border flex items-center gap-1 ${status.className}`}>
+                          <StatusIcon className="w-3 h-3" aria-hidden="true" />
+                          {status.label}
+                        </span>
+                        {inc.severity && (
+                          <span className={`px-2 py-0.5 text-[11px] rounded-md border uppercase ${severityBadge(inc.severity)}`}>
+                            {inc.severity}
+                          </span>
+                        )}
+                        {inc.source && inc.source !== 'dynamodb' && (
+                          <span className="px-2 py-0.5 text-[11px] rounded-md border border-dashed border-slate-600 text-slate-300">
+                            {SOURCE_LABEL[inc.source]}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-200 line-clamp-2">{inc.summary || 'No summary available.'}</p>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
+                        <span>{inc.service ?? 'unknown service'}</span>
+                        <time dateTime={inc.detected_at ?? undefined}>{formatTimestamp(inc.detected_at)}</time>
+                        {inc.ticket_key && <span className="font-mono">{inc.ticket_key}</span>}
+                      </div>
                     </div>
-                    <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+
+                    <div className="w-28 shrink-0 space-y-1 text-right">
+                      <span className="block text-[11px] text-slate-400">Confidence</span>
+                      <span className={`block text-sm font-semibold ${tone.text}`}>{pct === null ? 'n/a' : `${pct}%`}</span>
                       <div
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          confPercent >= 70
-                            ? 'bg-emerald-500'
-                            : confPercent >= 50
-                            ? 'bg-amber-500'
-                            : 'bg-slate-600'
-                        }`}
-                        style={{ width: `${confPercent}%` }}
-                      />
+                        role="progressbar"
+                        aria-label="RCA confidence"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={pct ?? undefined}
+                        aria-valuetext={pct === null ? 'unknown' : `${pct}%`}
+                        className="h-1.5 bg-slate-800 rounded-full overflow-hidden"
+                      >
+                        <div className={`h-full ${tone.bar}`} style={{ width: `${pct ?? 0}%` }} />
+                      </div>
                     </div>
-                  </div>
-
-                  <span className="text-slate-600 group-hover:text-slate-300 transition">
-                    <ExternalLink className="w-4 h-4" />
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+                    <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-white self-center" aria-hidden="true" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
-    </section>
+    </div>
   );
 };

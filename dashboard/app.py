@@ -11,9 +11,12 @@ Provides real-time visualization of:
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import glob
+import hashlib
 import json
 import logging
 import os
+import time
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import boto3
@@ -37,6 +40,14 @@ FRONTEND_DIST_PATH = REPO_ROOT / "frontend" / "dist"
 
 # Local in-memory incident cache for demo & offline mode
 LOCAL_INCIDENTS_CACHE: List[Dict[str, Any]] = []
+# Cap the demo cache so repeated simulations cannot grow memory without bound
+LOCAL_INCIDENTS_CACHE_MAX = 200
+
+
+def stable_ticket_number(seed: str, modulo: int = 900, offset: int = 100) -> int:
+    """Deterministic ticket number (Python's hash() is randomised per process)."""
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % modulo + offset
 
 
 def seed_cache_from_fixtures():
@@ -59,7 +70,7 @@ def seed_cache_from_fixtures():
             route = route_rca(rca_mock)
 
             has_pr = route == "propose_fix"
-            ticket_key = f"OPS-{abs(hash(inc_id)) % 900 + 100}"
+            ticket_key = f"OPS-{stable_ticket_number(inc_id)}"
             pr_branch = f"opspilot/{ticket_key}" if has_pr else None
 
             sample_patch = """--- a/sample_service/app.py
@@ -84,11 +95,13 @@ def seed_cache_from_fixtures():
                 "suspected_location": rca_mock.suspected_location.model_dump() if rca_mock.suspected_location else None,
                 "evidence": [e.model_dump() for e in rca_mock.evidence],
                 "ticket_key": ticket_key,
-                "ticket_url": f"https://jira.example.com/browse/{ticket_key}",
+                # Fixture replays never created a real ticket or PR, so no links are emitted.
+                "ticket_url": None,
                 "pr_branch": pr_branch,
-                "pr_url": f"https://github.com/himanshu-nakrani/opspilot-aws/pull/{abs(hash(inc_id)) % 50 + 1}" if has_pr else None,
+                "pr_url": None,
                 "patch_diff": sample_patch,
                 "suggested_fix_strategy": rca_mock.suggested_fix_strategy,
+                "source": "fixture",
             })
         except Exception as e:
             logger.warning("Could not load fixture %s into dashboard cache: %s", path, e)
@@ -102,16 +115,27 @@ async def lifespan(app: FastAPI):
 
 dashboard_app = FastAPI(title="OpsPilot SRE Dashboard", lifespan=lifespan)
 
+# The SPA is served same-origin (and the Vite dev server proxies /api), so CORS is only
+# needed for explicitly configured origins. Never combine a wildcard with credentials.
+_cors_origins = [
+    o.strip()
+    for o in os.environ.get("DASHBOARD_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if o.strip()
+]
 dashboard_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
-if (FRONTEND_DIST_PATH / "assets").exists():
-    dashboard_app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_PATH / "assets")), name="assets")
+# check_dir=False so assets built after the server starts are still served.
+dashboard_app.mount(
+    "/assets",
+    StaticFiles(directory=str(FRONTEND_DIST_PATH / "assets"), check_dir=False),
+    name="assets",
+)
 
 
 @dashboard_app.get("/", response_class=HTMLResponse)
@@ -144,8 +168,11 @@ def list_incidents() -> List[Dict[str, Any]]:
                     "service": raw.get("service", {}).get("S", "sample-service"),
                     "detected_at": raw.get("detected_at", {}).get("S"),
                     "status": raw.get("status", {}).get("S", "RECORDED"),
-                    "classification": raw.get("classification", {}).get("S", "code_defect"),
-                    "confidence": float(raw.get("confidence", {}).get("N", "0.9")),
+                    # Missing values stay null so the UI shows "unknown" instead of a
+                    # fabricated confident code_defect.
+                    "classification": raw.get("classification", {}).get("S"),
+                    "confidence": float(raw["confidence"]["N"]) if "N" in raw.get("confidence", {}) else None,
+                    "source": "dynamodb",
                     "ticket_key": raw.get("ticket_key", {}).get("S"),
                     "ticket_url": raw.get("ticket_url", {}).get("S"),
                     "pr_branch": raw.get("pr_branch", {}).get("S"),
@@ -181,72 +208,92 @@ def get_incident(incident_id: str) -> Dict[str, Any]:
     raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
 
+AGENTCORE_POLICIES = ["blast_radius_files", "blast_radius_lines", "protected_paths", "evidence_grounding", "abstention_policy"]
+AGENTCORE_GATEWAY_TOOLS = ["query_logs", "get_file", "get_commit_diff", "submit_rca"]
+
+
+def _installed_version(dist_name: str) -> Optional[str]:
+    try:
+        return importlib_metadata.version(dist_name)
+    except importlib_metadata.PackageNotFoundError:
+        return None
+
+
 @dashboard_app.get("/api/stats")
 def get_stats() -> Dict[str, Any]:
-    """Aggregate KPI statistics for OpsPilot pipeline."""
+    """Aggregate KPI statistics for OpsPilot pipeline.
+
+    Values that are not measured are returned as null, never as a fixed success figure.
+    """
     incidents = list_incidents()
     total = len(incidents)
-    if total == 0:
-        return {
-            "total_incidents": 0,
-            "mean_confidence": 0.0,
-            "total_prs_opened": 0,
-            "verification_pass_rate": 1.0,
-        }
 
-    confidences = [float(i.get("confidence", 0.0)) for i in incidents if i.get("confidence") is not None]
-    prs_opened = sum(1 for i in incidents if i.get("pr_branch") or i.get("pr_url"))
-    mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
+    confidences = [float(i["confidence"]) for i in incidents if i.get("confidence") is not None]
+    with_pr = [i for i in incidents if i.get("pr_branch") or i.get("pr_url")]
+    verified = [i for i in with_pr if i.get("status") == "VERIFIED"]
 
     return {
         "total_incidents": total,
-        "mean_confidence": round(mean_conf, 3),
-        "total_prs_opened": prs_opened,
-        "verification_pass_rate": 1.0,
+        "mean_confidence": round(sum(confidences) / len(confidences), 3) if confidences else None,
+        "total_prs_opened": len(with_pr),
+        "verified_prs": len(verified),
+        # Share of fix PRs whose incident reached VERIFIED; null when there are no PRs.
+        "verification_pass_rate": round(len(verified) / len(with_pr), 3) if with_pr else None,
         "agent_framework": "AWS Strands Agents SDK + Amazon Bedrock AgentCore Runtime",
-        "agentcore_policies_active": ["blast_radius_files", "blast_radius_lines", "protected_paths", "evidence_grounding", "abstention_policy"],
-        "agentcore_gateway_tools": ["query_logs", "get_file", "get_commit_diff", "submit_rca"],
+        "strands_sdk_version": _installed_version("strands-agents"),
+        "agentcore_policies_active": AGENTCORE_POLICIES,
+        "agentcore_gateway_tools": AGENTCORE_GATEWAY_TOOLS,
     }
 
 
 @dashboard_app.post("/api/trigger")
 def trigger_incident_simulation() -> Dict[str, Any]:
-    """Simulate incident: call bad endpoint 5 times and trigger alarm ingestion."""
-    client = TestClient(sample_app, raise_server_exceptions=False)
-    for _ in range(5):
-        client.get("/orders/999")
+    """Simulate incident: call bad endpoint 5 times and trigger alarm ingestion.
 
-    # Ingest alarm event
+    This is a demo path. The RCA fields below are a canned example, and the response is
+    flagged ``simulated`` so the UI can label it; no real ticket or PR is created.
+    """
+    client = TestClient(sample_app, raise_server_exceptions=False)
+    failed_calls = 0
+    for _ in range(5):
+        if client.get("/orders/999").status_code >= 500:
+            failed_calls += 1
+
+    now = datetime.now(timezone.utc).isoformat()
     alarm_event = {
         "source": "aws.cloudwatch",
         "detail-type": "CloudWatch Alarm State Change",
-        "time": datetime.now(timezone.utc).isoformat(),
+        "time": now,
         "detail": {
             "alarmName": "OpsPilotSampleServiceErrors",
             "state": {
                 "value": "ALARM",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "reason": "Threshold Crossed: 5 unhandled AttributeError tracebacks",
+                "timestamp": now,
+                "reason": f"Threshold Crossed: {failed_calls} unhandled AttributeError tracebacks",
             },
         },
     }
 
-    # Ingest alarm event (with graceful offline fallback)
+    ingest_mode = "live"
     try:
         res = handle_alarm_event(alarm_event)
-        inc_id = res.get("incident_id", f"inc-{int(datetime.now().timestamp())}")
+        inc_id = res.get("incident_id") or f"inc-{int(time.time())}"
     except Exception as e:
         logger.info("Local mode: handle_alarm_event simulated without AWS credentials: %s", e)
-        res = {"status": "started", "incident_id": f"inc-{int(datetime.now().timestamp())}"}
-        inc_id = res["incident_id"]
+        ingest_mode = "offline"
+        res = {"status": "started"}
+        inc_id = f"inc-sim-{int(time.time() * 1000)}"
 
-    # Add to local cache
+    ingest_status = res.get("status", "unknown")
+    duplicate = ingest_status != "started"
+    ticket_key = f"OPS-{stable_ticket_number(inc_id)}"
+
     new_inc = {
         "incident_id": inc_id,
         "service": "sample-service",
         "alarm_name": "OpsPilotSampleServiceErrors",
-        "detected_at": datetime.now(timezone.utc).isoformat(),
-        "status": "VERIFIED" if res.get("status") == "started" else "DUPLICATE_SKIPPED",
+        "detected_at": now,
+        "status": "DUPLICATE_SKIPPED" if duplicate else "PROPOSED",
         "classification": "code_defect",
         "confidence": 0.94,
         "severity": "sev2",
@@ -260,11 +307,11 @@ def trigger_incident_simulation() -> Dict[str, Any]:
             {"kind": "log_line", "ref": "log-1", "claim": "AttributeError: 'NoneType' object has no attribute 'total'"},
             {"kind": "stack_frame", "ref": "sample_service/app.py:29", "claim": "Exception raised on order.total access"},
         ],
-        "ticket_key": f"OPS-{abs(hash(inc_id)) % 800 + 100}",
-        "ticket_url": f"https://jira.example.com/browse/OPS-42",
-        "pr_branch": f"opspilot/OPS-42",
-        "pr_url": f"https://github.com/himanshu-nakrani/opspilot-aws/pull/42",
-        "patch_diff": """--- a/sample_service/app.py
+        "ticket_key": None if duplicate else ticket_key,
+        "ticket_url": None,
+        "pr_branch": None if duplicate else f"opspilot/{ticket_key}",
+        "pr_url": None,
+        "patch_diff": None if duplicate else """--- a/sample_service/app.py
 +++ b/sample_service/app.py
 @@ -28,3 +29,5 @@
  def get_order(order_id: str):
@@ -273,19 +320,39 @@ def trigger_incident_simulation() -> Dict[str, Any]:
 +        raise HTTPException(status_code=404, detail="Order not found")
 """,
         "suggested_fix_strategy": "Return 404 HTTPException if order ID does not exist in store.",
+        "source": "simulated",
     }
     LOCAL_INCIDENTS_CACHE.insert(0, new_inc)
+    del LOCAL_INCIDENTS_CACHE[LOCAL_INCIDENTS_CACHE_MAX:]
 
     return {
         "status": "success",
-        "message": f"Sample incident triggered (5 calls to /orders/999 failed with 500). Ingested incident {inc_id[:16]}...",
+        "simulated": True,
+        "ingest_mode": ingest_mode,
+        "ingest_status": ingest_status,
+        "failed_calls": failed_calls,
+        "incident_id": inc_id,
+        "summary": new_inc["summary"],
+        "message": f"{failed_calls} calls to /orders/999 returned 5xx. Ingested incident {inc_id} ({ingest_mode} mode).",
         "incident": new_inc,
     }
 
 
+# Same thresholds as evals/run_evals.py
+EVAL_TARGETS = {
+    "classification_accuracy": 90.0,
+    "location_hit_rate": 90.0,
+    "abstention_precision": 100.0,
+    "evidence_ref_validity_rate": 95.0,
+}
+
+
 @dashboard_app.get("/api/evals")
 def run_evals_api() -> Dict[str, Any]:
-    """Execute M6 benchmark eval harness and return structured metrics."""
+    """Execute M6 benchmark eval harness and return structured metrics.
+
+    Field names match ``EvalsReport`` / ``FixtureEvalDetail`` in frontend/src/types.ts.
+    """
     from evals.run_evals import estimate_tokens, verify_evidence_refs
 
     fixtures_dir = REPO_ROOT / "evals" / "fixtures"
@@ -298,6 +365,9 @@ def run_evals_api() -> Dict[str, Any]:
     loc_total = 0
     abstain_hits = 0
     abstain_total = 0
+    evidence_validity_sum = 0.0
+    latencies: List[float] = []
+    token_counts: List[int] = []
     details = []
 
     for path in fixture_files:
@@ -308,43 +378,76 @@ def run_evals_api() -> Dict[str, Any]:
         gold = data["gold"]
         bundle = ContextBundle.model_validate(data["context_bundle"])
 
+        t0 = time.perf_counter()
         rca = run_rca_agent(bundle)
         route = route_rca(rca)
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        tokens = estimate_tokens(bundle, rca)
+        latencies.append(latency_ms)
+        token_counts.append(tokens)
 
         cls_ok = rca.classification == gold["classification"]
-        if cls_ok:
-            correct_cls += 1
-
+        correct_cls += int(cls_ok)
         route_ok = route == gold["route"]
-        if route_ok:
-            correct_routes += 1
+        correct_routes += int(route_ok)
 
+        loc_ok: Optional[bool] = None
         if "location" in gold:
             loc_total += 1
-            if rca.suspected_location and rca.suspected_location.file == gold["location"]["file"]:
-                loc_hits += 1
+            g_loc = gold["location"]
+            loc_ok = bool(
+                rca.suspected_location
+                and rca.suspected_location.file == g_loc["file"]
+                and abs(rca.suspected_location.line - g_loc.get("line", rca.suspected_location.line)) <= 2
+            )
+            loc_hits += int(loc_ok)
 
+        abstain_ok: Optional[bool] = None
         if gold.get("should_abstain"):
             abstain_total += 1
-            if rca.classification == "insufficient_evidence":
-                abstain_hits += 1
+            abstain_ok = rca.classification == "insufficient_evidence" and route == "notify"
+            abstain_hits += int(abstain_ok)
+
+        evidence_validity_sum += verify_evidence_refs(bundle, rca)
 
         details.append({
             "id": f_id,
-            "gold_cls": gold["classification"],
-            "pred_cls": rca.classification,
+            "name": data.get("name", f_id),
+            "gold_classification": gold["classification"],
+            "predicted_classification": rca.classification,
             "gold_route": gold["route"],
-            "pred_route": route,
-            "confidence": f"{rca.confidence:.2f}",
-            "status": "✅ PASS" if cls_ok and route_ok else "❌ FAIL",
+            "predicted_route": route,
+            "confidence": round(float(rca.confidence), 3),
+            "tokens": tokens,
+            "latency_ms": round(latency_ms, 2),
+            "location_hit": loc_ok,
+            "abstention_correct": abstain_ok,
+            "passed": cls_ok and route_ok and loc_ok is not False and abstain_ok is not False,
         })
 
-    return {
-        "total_fixtures": total,
+    metrics = {
         "classification_accuracy": (correct_cls / total) * 100.0 if total else 0.0,
         "route_accuracy": (correct_routes / total) * 100.0 if total else 0.0,
         "location_hit_rate": (loc_hits / loc_total) * 100.0 if loc_total else 100.0,
         "abstention_precision": (abstain_hits / abstain_total) * 100.0 if abstain_total else 100.0,
+        "evidence_ref_validity_rate": (evidence_validity_sum / total) * 100.0 if total else 0.0,
+    }
+    all_targets_passed = total > 0 and all(metrics[k] >= v for k, v in EVAL_TARGETS.items())
+
+    return {
+        "total_fixtures": total,
+        "passed_fixtures": sum(1 for d in details if d["passed"]),
+        "classification_correct": correct_cls,
+        "route_correct": correct_routes,
+        "location_hits": loc_hits,
+        "location_total": loc_total,
+        "abstention_hits": abstain_hits,
+        "abstention_total": abstain_total,
+        **metrics,
+        "mean_tokens": sum(token_counts) / len(token_counts) if token_counts else 0.0,
+        "mean_latency_ms": sum(latencies) / len(latencies) if latencies else 0.0,
+        "targets": EVAL_TARGETS,
+        "all_targets_passed": all_targets_passed,
         "details": details,
     }
 

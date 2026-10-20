@@ -2,45 +2,55 @@ import { EvalsReport, Incident, Stats, TriggerResponse } from './types';
 
 const API_BASE = '/api';
 
-export async function fetchIncidents(): Promise<Incident[]> {
-  const res = await fetch(`${API_BASE}/incidents`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch incidents: ${res.statusText}`);
+export class ApiError extends Error {
+  constructor(message: string, public status?: number) {
+    super(message);
+    this.name = 'ApiError';
   }
-  return res.json();
 }
 
-export async function fetchIncident(incidentId: string): Promise<Incident> {
-  const res = await fetch(`${API_BASE}/incidents/${incidentId}`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch incident ${incidentId}: ${res.statusText}`);
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, init);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    throw new ApiError(`Cannot reach the OpsPilot API (${path}). Is the dashboard server running?`);
   }
-  return res.json();
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      if (body && typeof body.detail === 'string') detail = body.detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(`${path} failed: ${res.status} ${detail}`.trim(), res.status);
+  }
+  return (await res.json()) as T;
 }
 
-export async function fetchStats(): Promise<Stats> {
-  const res = await fetch(`${API_BASE}/stats`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch stats: ${res.statusText}`);
-  }
-  return res.json();
-}
+export const fetchIncidents = (signal?: AbortSignal) => request<Incident[]>('/incidents', { signal });
 
-export async function triggerSimulation(): Promise<TriggerResponse> {
-  const res = await fetch(`${API_BASE}/trigger`, {
+export const fetchIncident = (incidentId: string, signal?: AbortSignal) =>
+  request<Incident>(`/incidents/${encodeURIComponent(incidentId)}`, { signal });
+
+export const fetchStats = (signal?: AbortSignal) => request<Stats>('/stats', { signal });
+
+export const triggerSimulation = () =>
+  request<TriggerResponse>('/trigger', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   });
-  if (!res.ok) {
-    throw new Error(`Failed to trigger simulation: ${res.statusText}`);
-  }
-  return res.json();
+
+export const fetchEvals = (signal?: AbortSignal) => request<EvalsReport>('/evals', { signal });
+
+export function errorMessage(e: unknown, fallback = 'Something went wrong'): string {
+  if (e instanceof Error && e.message) return e.message;
+  if (typeof e === 'string' && e) return e;
+  return fallback;
 }
 
-export async function fetchEvals(): Promise<EvalsReport> {
-  const res = await fetch(`${API_BASE}/evals`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch evals: ${res.statusText}`);
-  }
-  return res.json();
+export function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === 'AbortError';
 }
