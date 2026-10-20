@@ -1,0 +1,23 @@
+{
+  "id": "fixture-03-config-typo-invalid-port",
+  "name": "Typo in port configuration string",
+  "gold": {
+    "classification": "config_regression",
+    "route": "propose_fix",
+    "should_abstain": false
+  },
+  "context_bundle": {
+    "incident_id": "inc-eval-03",
+    "service": "sample-service",
+    "log_group": "/aws/lambda/opspilot-sample-service",
+    "detected_at": "2026-10-20T12:00:00Z",
+    "log_lines": [
+      {"id": "log-1", "timestamp": "2026-10-20T12:00:00Z", "message": "Loading app config from env"},
+      {"id": "log-2", "timestamp": "2026-10-20T12:00:01Z", "message": "ValueError: invalid port config value 'eighty_eighty' - must be an integer"}
+    ],
+    "stack_trace": null,
+    "repo": "himanshu-nakrani/opspilot-aws-poc",
+    "repo_files": {},
+    "recent_commits": []
+  }
+}

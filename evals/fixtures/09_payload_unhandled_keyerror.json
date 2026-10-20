@@ -1,0 +1,38 @@
+{
+  "id": "fixture-09-payload-unhandled-keyerror",
+  "name": "Unhandled KeyError in order payload deserialization",
+  "gold": {
+    "classification": "code_defect",
+    "route": "propose_fix",
+    "should_abstain": false,
+    "location": {
+      "file": "sample_service/app.py",
+      "line": 28
+    }
+  },
+  "context_bundle": {
+    "incident_id": "inc-eval-09",
+    "service": "sample-service",
+    "log_group": "/aws/lambda/opspilot-sample-service",
+    "detected_at": "2026-10-20T12:00:00Z",
+    "log_lines": [
+      {"id": "log-1", "timestamp": "2026-10-20T12:00:00Z", "message": "POST /orders incoming body: {}"},
+      {"id": "log-2", "timestamp": "2026-10-20T12:00:01Z", "message": "Traceback (most recent call last):\n  File \"sample_service/app.py\", line 28, in create_order\n    customer_id = payload['customer_id']\nKeyError: 'customer_id'"}
+    ],
+    "stack_trace": {
+      "error_type": "KeyError",
+      "error_message": "'customer_id'",
+      "frames": [
+        {"file": "sample_service/app.py", "line": 28, "function": "create_order", "code_context": "customer_id = payload['customer_id']"}
+      ],
+      "top_frame": {"file": "sample_service/app.py", "line": 28, "function": "create_order", "code_context": "customer_id = payload['customer_id']"}
+    },
+    "repo": "himanshu-nakrani/opspilot-aws-poc",
+    "repo_files": {
+      "sample_service/app.py": "def create_order(payload: dict):\n    customer_id = payload['customer_id']"
+    },
+    "recent_commits": [
+      {"commit": "66bd14a2bd08c46f54eb1530908d6ea8485ae6d3", "subject": "Initial commit", "author": "opspilot"}
+    ]
+  }
+}

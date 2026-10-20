@@ -1,0 +1,38 @@
+{
+  "id": "fixture-01-sample-missing-order",
+  "name": "Planted missing-order bug in sample service",
+  "gold": {
+    "classification": "code_defect",
+    "route": "propose_fix",
+    "should_abstain": false,
+    "location": {
+      "file": "sample_service/app.py",
+      "line": 29
+    }
+  },
+  "context_bundle": {
+    "incident_id": "inc-eval-01",
+    "service": "sample-service",
+    "log_group": "/aws/lambda/opspilot-sample-service",
+    "detected_at": "2026-10-20T12:00:00Z",
+    "log_lines": [
+      {"id": "log-1", "timestamp": "2026-10-20T12:00:00Z", "message": "GET /orders/999"},
+      {"id": "log-2", "timestamp": "2026-10-20T12:00:01Z", "message": "Traceback (most recent call last):\n  File \"sample_service/app.py\", line 29, in get_order\n    \"total\": order.total,\nAttributeError: 'NoneType' object has no attribute 'total'"}
+    ],
+    "stack_trace": {
+      "error_type": "AttributeError",
+      "error_message": "'NoneType' object has no attribute 'total'",
+      "frames": [
+        {"file": "sample_service/app.py", "line": 29, "function": "get_order", "code_context": "\"total\": order.total,"}
+      ],
+      "top_frame": {"file": "sample_service/app.py", "line": 29, "function": "get_order", "code_context": "\"total\": order.total,"}
+    },
+    "repo": "himanshu-nakrani/opspilot-aws-poc",
+    "repo_files": {
+      "sample_service/app.py": "def get_order(order_id: str):\n    order = ORDERS.get(order_id)\n    return {\"total\": order.total}"
+    },
+    "recent_commits": [
+      {"commit": "66bd14a2bd08c46f54eb1530908d6ea8485ae6d3", "subject": "Initial commit", "author": "opspilot"}
+    ]
+  }
+}

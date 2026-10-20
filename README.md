@@ -15,7 +15,7 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 | M3 Classifier/router + Jira ticket | ✅ done |
 | M4 Patch agent → branch + PR with reproduction test | ✅ done |
 | M5 CodeBuild verification + notification | ✅ done |
-| M6 Offline eval harness (replay fixtures) | ⏳ |
+| M6 Offline eval harness (replay fixtures) | ✅ done |
 
 ## Repo map
 - docs/ARCHITECTURE.md — components, data flow, decisions and guardrails

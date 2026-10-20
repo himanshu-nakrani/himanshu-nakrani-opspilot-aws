@@ -45,7 +45,17 @@ def analyze_heuristically(bundle: ContextBundle) -> RcaResult:
     if not st or not st.frames:
         # Check logs for known failure keywords
         full_log = " ".join(l.message for l in bundle.log_lines).lower()
-        if "timeout" in full_log or "gateway" in full_log or "503" in full_log:
+        if "connection pool" in full_log or "out of memory" in full_log or "oom" in full_log or "killed" in full_log:
+            return RcaResult(
+                incident_id=bundle.incident_id,
+                classification="resource",
+                severity="sev1",
+                confidence=0.85,
+                summary="Resource exhaustion detected (memory or database connection pool limit reached).",
+                evidence=[EvidenceItem(kind="log_line", ref=primary_log_ref, claim="Resource limit error in logs")],
+                suggested_fix_strategy="Increase resource limits or tune pool size and concurrency.",
+            )
+        elif "timeout" in full_log or "gateway" in full_log or "503" in full_log:
             return RcaResult(
                 incident_id=bundle.incident_id,
                 classification="dependency",
@@ -54,16 +64,6 @@ def analyze_heuristically(bundle: ContextBundle) -> RcaResult:
                 summary="Downstream service failure or network timeout detected in logs.",
                 evidence=[EvidenceItem(kind="log_line", ref=primary_log_ref, claim="Timeout / 503 log message detected")],
                 suggested_fix_strategy="Implement retry policy with exponential backoff and circuit breaker.",
-            )
-        elif "connection pool" in full_log or "out of memory" in full_log or "oom" in full_log or "killed" in full_log:
-            return RcaResult(
-                incident_id=bundle.incident_id,
-                classification="resource",
-                severity="sev1",
-                confidence=0.85,
-                summary="Resource exhaustion detected (memory or connection pool limit reached).",
-                evidence=[EvidenceItem(kind="log_line", ref=primary_log_ref, claim="Resource limit error in logs")],
-                suggested_fix_strategy="Increase resource limits or tune pool size and concurrency.",
             )
         elif "config" in full_log or "env" in full_log or "invalid port" in full_log:
             return RcaResult(
