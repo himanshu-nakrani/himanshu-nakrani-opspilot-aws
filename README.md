@@ -30,6 +30,15 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 4. **Least privilege.** The LLM gets no AWS write permissions. The GitHub token can only write to `opspilot/*` branches on the one target repo. Branch protection requires a human review before merge.
 5. **The model is configurable** (`BEDROCK_MODEL_ID`). The plan named Claude 3.5 Sonnet. Pick the current Claude Sonnet model or inference profile available in your Bedrock region.
 
+## Agent Stack: AWS Strands Agents SDK + Amazon Bedrock AgentCore
+OpsPilot is built using AWS's modern agentic architecture:
+- **AWS Strands Agents SDK (`strands-agents`):** Model-first agent execution loop (`strands.Agent`, `@tool` decorators, streaming events, multi-turn reasoning).
+- **Amazon Bedrock AgentCore Architecture:**
+  - **AgentCore Runtime:** Serverless agent execution environment, session isolation, task handoff, and CloudWatch EMF telemetry (`OpsPilot/AgentCore`).
+  - **AgentCore Gateway:** Model Context Protocol (MCP) compatible tool gateway (`query_logs`, `get_file`, `get_commit_diff`, `submit_rca`).
+  - **AgentCore Policy:** Blast-radius guardrails (max 3 files / 80 lines, protected files check), evidence grounding verification, and automatic abstention on noisy logs.
+  - **AgentCore Memory:** Structured working memory for session state, ruled-out hypotheses, and tool audit trails.
+
 ## SRE Dashboard (FastAPI)
 Launch the lightweight real-time SRE dashboard:
 ```bash

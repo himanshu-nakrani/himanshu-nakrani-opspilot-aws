@@ -8,6 +8,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from opspilot.contracts import ContextBundle, EvidenceItem, IncidentEvent, RcaResult, SuspectedLocation
+from opspilot.rca.strands_agent import run_strands_rca
 from opspilot.rca.tools import (
     RCA_TOOL_CONFIG,
     execute_get_commit_diff,
@@ -122,17 +123,27 @@ def run_rca_agent(
     model_id: Optional[str] = None,
     max_turns: int = 6,
     repo_root: Optional[str] = None,
+    use_strands: bool = True,
 ) -> RcaResult:
-    """Run Bedrock Converse tool-use loop or fallback."""
+    """Run Bedrock Converse tool-use loop or AWS Strands + AgentCore Runtime."""
     if not model_id:
         model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
 
-    # If no bedrock client or test environment without live credentials, use deterministic analyzer
-    use_live_bedrock = bool(bedrock_client or (os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_ACCESS_KEY_ID") != "testing"))
-    if not use_live_bedrock:
-        return analyze_heuristically(bundle)
-
-    client = bedrock_client or boto3.client("bedrock-runtime")
+    # If explicit bedrock_client passed (e.g. mock in unit tests), use Converse loop
+    if bedrock_client is not None:
+        client = bedrock_client
+    elif use_strands:
+        return run_strands_rca(
+            bundle=bundle,
+            model_id=model_id,
+            max_turns=max_turns,
+            repo_root=repo_root,
+        )
+    else:
+        use_live_bedrock = bool(os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_ACCESS_KEY_ID") != "testing")
+        if not use_live_bedrock:
+            return analyze_heuristically(bundle)
+        client = boto3.client("bedrock-runtime")
 
     messages = [
         {

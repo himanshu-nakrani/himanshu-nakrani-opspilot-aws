@@ -10,6 +10,8 @@ Enforces rules from docs/ARCHITECTURE.md:
 import re
 from typing import List, Tuple
 
+from opspilot.agentcore.policy import AgentCorePolicy, PolicyViolationError
+
 MAX_CHANGED_FILES = 3
 MAX_CHANGED_LINES = 80
 
@@ -32,25 +34,12 @@ class PatchRejectedException(Exception):
     pass
 
 
+_DEFAULT_POLICY = AgentCorePolicy()
+
+
 def parse_unified_diff(diff_text: str) -> Tuple[List[str], int, int]:
     """Parse a unified diff into modified file list, additions, and deletions."""
-    files: List[str] = []
-    additions = 0
-    deletions = 0
-
-    for line in diff_text.splitlines():
-        if line.startswith("+++ b/"):
-            file_path = line[6:].strip()
-            if file_path not in files:
-                files.append(file_path)
-        elif line.startswith("--- a/") or line.startswith("diff --git"):
-            pass
-        elif line.startswith("+") and not line.startswith("+++"):
-            additions += 1
-        elif line.startswith("-") and not line.startswith("---"):
-            deletions += 1
-
-    return files, additions, deletions
+    return _DEFAULT_POLICY.parse_unified_diff(diff_text)
 
 
 def validate_patch_limits(
@@ -58,34 +47,12 @@ def validate_patch_limits(
     extra_files: List[str] = None,
     extra_lines: int = 0,
 ) -> Tuple[bool, str]:
-    """Validate patch limits.
+    """Validate patch limits using Bedrock AgentCore Policy.
 
     Returns (is_valid, message).
     Raises PatchRejectedException if limits are violated.
     """
-    files, additions, deletions = parse_unified_diff(diff_text)
-    if extra_files:
-        for f in extra_files:
-            if f not in files:
-                files.append(f)
-
-    total_changed_lines = additions + deletions + extra_lines
-
-    # 1. File count check
-    if len(files) > MAX_CHANGED_FILES:
-        msg = f"Patch modifies {len(files)} files (maximum allowed is {MAX_CHANGED_FILES}): {files}"
-        raise PatchRejectedException(msg)
-
-    # 2. Line count check
-    if total_changed_lines > MAX_CHANGED_LINES:
-        msg = f"Patch modifies {total_changed_lines} lines (maximum allowed is {MAX_CHANGED_LINES})"
-        raise PatchRejectedException(msg)
-
-    # 3. Forbidden file checks
-    for f in files:
-        for pat in FORBIDDEN_FILE_PATTERNS:
-            if pat.search(f):
-                msg = f"Patch attempts to modify protected file {f} (CI/IaC/manifests are prohibited)"
-                raise PatchRejectedException(msg)
-
-    return True, "Patch passed all safety limits."
+    try:
+        return _DEFAULT_POLICY.enforce_patch_policy(diff_text, extra_files=extra_files, extra_lines=extra_lines)
+    except PolicyViolationError as e:
+        raise PatchRejectedException(str(e)) from e

@@ -11,3 +11,4 @@ moto>=5.0.0
 responses>=0.25.0
 pyyaml>=6.0.0
 uvicorn>=0.30.0
+strands-agents>=1.61.0

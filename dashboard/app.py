@@ -185,6 +185,9 @@ def get_stats() -> Dict[str, Any]:
         "mean_confidence": round(mean_conf, 3),
         "total_prs_opened": prs_opened,
         "verification_pass_rate": 1.0,
+        "agent_framework": "AWS Strands Agents SDK + Amazon Bedrock AgentCore Runtime",
+        "agentcore_policies_active": ["blast_radius_files", "blast_radius_lines", "protected_paths", "evidence_grounding", "abstention_policy"],
+        "agentcore_gateway_tools": ["query_logs", "get_file", "get_commit_diff", "submit_rca"],
     }
 
 

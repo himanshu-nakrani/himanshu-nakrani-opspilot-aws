@@ -21,6 +21,65 @@ sample-service (Lambda, Python)  ──logs──►  CloudWatch Logs
                      every step writes to DynamoDB `opspilot-incidents` (state + audit trail)
 ```
 
+## Agent Architecture: AWS Strands Agents SDK & Amazon Bedrock AgentCore
+
+OpsPilot uses **AWS Strands Agents SDK** (`strands-agents`) together with **Amazon Bedrock AgentCore** architecture patterns for enterprise-grade autonomous incident analysis and remediation.
+
+```mermaid
+flowchart TD
+    subgraph StepFunctions["AWS Step Functions (Orchestration)"]
+        CB[ContextBundle Injected]
+    end
+
+    subgraph AgentCore["Amazon Bedrock AgentCore Architecture"]
+        Runtime["AgentCore Runtime (Serverless Execution Environment)"]
+        Memory["AgentCore Memory (Working Memory, Hypotheses, Session State)"]
+        Policy["AgentCore Policy (Blast Radius, Guardrails & Abstention)"]
+        Gateway["AgentCore Gateway (Model Context Protocol / MCP Tools)"]
+    end
+
+    subgraph Strands["AWS Strands Agents SDK (strands-agents)"]
+        StrandsAgent["Strands Agent Event Loop (Agent, @tool, Streaming)"]
+        ModelBackend["BedrockModel / AgentCoreOfflineModel"]
+    end
+
+    subgraph Tools["AgentCore Gateway Tools"]
+        T1["query_logs (Logs Insights)"]
+        T2["get_file (Code Inspection)"]
+        T3["get_commit_diff (Git History)"]
+        T4["submit_rca (Validated Findings)"]
+    end
+
+    CB --> Runtime
+    Runtime --> Memory
+    Runtime --> Policy
+    Runtime --> Gateway
+    Runtime --> StrandsAgent
+    StrandsAgent --> ModelBackend
+    Gateway --> Tools
+    Policy -.Enforces boundaries.-> Tools
+    Policy -.Enforces grounding & abstention.-> T4
+    T4 --> Runtime
+```
+
+### 1. AWS Strands Agents SDK (`strands-agents`)
+AWS's open-source, model-driven agentic framework:
+- **Autonomous Multi-Turn Reasoning:** `Agent` manages the conversational reasoning loop, handling `toolUse` events and feeding `toolResult` blocks back into the context.
+- **Python-Native Tool Definition:** Functions decorated with `@tool` automatically generate OpenAPI and Bedrock-compatible schemas (`ToolSpec`), enabling type-safe parameters, descriptions, and automatic validation.
+- **Model Backend Integration:** Uses `strands.models.BedrockModel` for live Amazon Bedrock Converse streaming (Claude 3.5 Sonnet / Amazon Nova Pro) and `AgentCoreOfflineModel` for deterministic, zero-credential testing.
+
+### 2. Amazon Bedrock AgentCore
+AWS's modular foundation for running agents in production:
+- **AgentCore Runtime:** Serverless execution environment managing agent isolation, session lifecycles, and CloudWatch EMF (`OpsPilot/AgentCore`) performance telemetry.
+- **AgentCore Gateway:** Model Context Protocol (MCP) compatible interface exposing diagnostic tools (`query_logs`, `get_file`, `get_commit_diff`, `submit_rca`) to the LLM with input schema enforcement.
+- **AgentCore Policy:** Strict safety guardrails and blast-radius management:
+  - *Patch limits:* At most 3 modified files and 80 changed lines.
+  - *Protected paths:* Prohibits modifications to CI configs (`.github/`), IaC (`infra/`), contracts, or dependency manifests.
+  - *Grounding verification:* Validates evidence references against context bundle logs, stack frames, and git commits (confidence penalty to <= 0.40 on unverifiable claims).
+  - *Abstention rule:* Forces `insufficient_evidence` with confidence <= 0.40 when diagnostic traces are absent or inconclusive.
+- **AgentCore Memory:** Persistent session working memory tracking evaluated hypotheses, ruled-out causes, notes, and tool invocation latency.
+- **AgentCore Observability:** CloudWatch Embedded Metric Format (EMF) emitting `ExecutionDurationMs`, `ToolInvocations`, `PolicyViolations`, and `ConfidenceScore`.
+
 ## Components
 | Component | AWS service | Responsibility | Inputs → outputs (schemas) |
 |---|---|---|---|
