@@ -107,7 +107,7 @@ def handle_alarm_event(
     state_machine_arn = os.environ.get("STATE_MACHINE_ARN", "")
     service = os.environ.get("SERVICE_NAME", "sample-service")
     log_group = os.environ.get("LOG_GROUP_NAME", "/aws/lambda/opspilot-sample-service")
-    repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws-poc")
+    repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws")
 
     incident_id, window_start, window_end = compute_incident_id(alarm_name, detected_at_dt, dedup_window_min)
 

@@ -112,7 +112,7 @@ def propose_fix(
         logger.warning("Local git branch/commit operation in propose_fix: %s", e)
 
     # 3. Create GitHub Pull Request
-    repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws-poc")
+    repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws")
     pr_title = f"[OpsPilot] {ticket_ref.key}: {rca.summary[:60]}"
 
     evidence_md = "\n".join([f"- **[{ev.kind}]** `{ev.ref}`: {ev.claim}" for ev in rca.evidence])
@@ -199,7 +199,7 @@ def mark_needs_human_handler(event: Dict[str, Any], context: Optional[Any] = Non
     logger.info("MarkNeedsHuman invoked with event keys: %s", list(event.keys()))
 
     pr_data = event.get("pr", {})
-    repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws-poc")
+    repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws")
     pr_number = pr_data.get("pr_number", 1)
     github_token = os.environ.get("GITHUB_TOKEN", "")
 

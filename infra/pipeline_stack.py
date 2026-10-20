@@ -32,7 +32,7 @@ class PipelineStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
-        github_repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws-poc")
+        github_repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws")
         jira_base_url = os.environ.get("JIRA_BASE_URL", "https://jira.example.com")
         jira_project_key = os.environ.get("JIRA_PROJECT_KEY", "OPS")
         jira_email = os.environ.get("JIRA_EMAIL", "opspilot@example.com")
@@ -153,7 +153,7 @@ class PipelineStack(Stack):
         core_stack.alerts_topic.grant_publish(self.notify_fn)
 
         # 7. CodeBuild Verify Project
-        owner, repo_name = github_repo.split("/", 1) if "/" in github_repo else ("himanshu-nakrani", "opspilot-aws-poc")
+        owner, repo_name = github_repo.split("/", 1) if "/" in github_repo else ("himanshu-nakrani", "opspilot-aws")
         self.verify_project = codebuild.Project(
             self,
             "VerifyProject",
