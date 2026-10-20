@@ -158,23 +158,6 @@
             }
           ],
           "Next": "ProposeFix"
-        },
-        {
-          "And": [
-            {
-              "Variable": "$.error",
-              "IsPresent": false
-            },
-            {
-              "Variable": "$.rca.classification",
-              "StringEquals": "config_regression"
-            },
-            {
-              "Variable": "$.rca.confidence",
-              "NumericGreaterThanEquals": 0.6
-            }
-          ],
-          "Next": "ProposeFix"
         }
       ],
       "Default": "Notify"
