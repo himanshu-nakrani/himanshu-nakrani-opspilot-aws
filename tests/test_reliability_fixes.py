@@ -140,3 +140,21 @@ def test_jira_create_failure_raises_instead_of_fake_ticket(monkeypatch):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     with pytest.raises(jira_client.JiraError):
         jira_client.create_issue(rca, http_client=client)
+
+
+def test_asl_route_matches_python_router():
+    """The deployed Route Choice must send exactly what determine_route sends to propose_fix."""
+    from opspilot.route import FIXABLE_CLASSES, determine_route
+
+    to_fix = [c for c in STATES["Route"]["Choices"] if c["Next"] == "ProposeFix"]
+    asl_classes = {
+        cond["StringEquals"]
+        for c in to_fix for cond in c["And"] if cond.get("Variable") == "$.rca.classification"
+    }
+    assert asl_classes == set(FIXABLE_CLASSES)
+    for c in to_fix:
+        assert {"Variable": "$.rca.confidence", "NumericGreaterThanEquals": 0.6} in c["And"]
+    assert STATES["Route"]["Default"] == "Notify"
+    for cls in ("code_defect", "config_regression", "dependency", "resource", "insufficient_evidence"):
+        expected = "propose_fix" if cls in asl_classes else "notify"
+        assert determine_route(cls, 0.95) == expected

@@ -25,7 +25,7 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 
 ## Key design choices
 1. **Evidence-first RCA with abstention.** The RCA agent must cite log lines or stack frames for every claim. When evidence is weak it returns `classification: "insufficient_evidence"`; that route files a ticket and notifies, and **never opens a PR**.
-2. **The issue type decides the route:** `code_defect` → fix PR; `config_regression` → revert-suggestion PR; `dependency`/`resource` → ticket + notify only.
+2. **The issue type decides the route:** `code_defect` → fix PR; `config_regression` → ticket + notify until a revert agent exists; `dependency`/`resource` → ticket + notify only.
 3. **A verified PR, not just a green build.** The patch agent must add a reproduction test that fails on `main` and passes on the fix branch. CodeBuild runs both checks.
 4. **Least privilege.** The LLM gets no AWS write permissions. The GitHub token can only write to `opspilot/*` branches on the one target repo. Branch protection requires a human review before merge.
 5. **The model is configurable** (`BEDROCK_MODEL_ID`). The plan named Claude 3.5 Sonnet. Pick the current Claude Sonnet model or inference profile available in your Bedrock region.
