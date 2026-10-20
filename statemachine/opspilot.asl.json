@@ -1,0 +1,36 @@
+{
+  "Comment": "OpsPilot incident pipeline (contract). ${...} are substituted by CDK at deploy time.",
+  "StartAt": "CollectContext",
+  "States": {
+    "CollectContext": {"Type": "Task", "Resource": "${CollectContextFnArn}", "ResultPath": "$.context",
+      "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 2, "BackoffRate": 2}], "Next": "RunRCA"},
+    "RunRCA": {"Type": "Task", "Resource": "${RunRcaFnArn}", "ResultPath": "$.rca",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "CreateTicket"}], "Next": "CreateTicket"},
+    "CreateTicket": {"Type": "Task", "Resource": "${CreateTicketFnArn}", "ResultPath": "$.ticket", "Next": "Route"},
+    "Route": {"Type": "Choice",
+      "Choices": [
+        {"And": [
+          {"Variable": "$.rca.classification", "StringMatches": "code_defect"},
+          {"Variable": "$.rca.confidence", "NumericGreaterThanEquals": 0.6}], "Next": "ProposeFix"},
+        {"And": [
+          {"Variable": "$.rca.classification", "StringMatches": "config_regression"},
+          {"Variable": "$.rca.confidence", "NumericGreaterThanEquals": 0.6}], "Next": "ProposeFix"}
+      ],
+      "Default": "Notify"},
+    "ProposeFix": {"Type": "Task", "Resource": "${ProposeFixFnArn}", "ResultPath": "$.pr",
+      "Catch": [{"ErrorEquals": ["PatchRejected", "States.ALL"], "ResultPath": "$.error", "Next": "Notify"}], "Next": "Verify"},
+    "Verify": {"Type": "Task", "Resource": "arn:aws:states:::codebuild:startBuild.sync",
+      "Parameters": {"ProjectName": "${VerifyProjectName}",
+        "SourceVersion.$": "$.pr.branch",
+        "EnvironmentVariablesOverride": [
+          {"Name": "BASE_REF", "Value.$": "$.pr.base"},
+          {"Name": "REPRO_TEST", "Value.$": "$.pr.repro_test_path"}]},
+      "ResultPath": "$.verify",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.verify_error", "Next": "RetryOrGiveUp"}], "Next": "Notify"},
+    "RetryOrGiveUp": {"Type": "Choice",
+      "Choices": [{"Variable": "$.pr.attempt", "NumericLessThan": 2, "Next": "ProposeFix"}],
+      "Default": "MarkNeedsHuman"},
+    "MarkNeedsHuman": {"Type": "Task", "Resource": "${MarkNeedsHumanFnArn}", "ResultPath": "$.pr", "Next": "Notify"},
+    "Notify": {"Type": "Task", "Resource": "${NotifyFnArn}", "End": true}
+  }
+}

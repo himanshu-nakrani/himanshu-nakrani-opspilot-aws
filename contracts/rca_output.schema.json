@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RcaResult",
+  "type": "object",
+  "required": ["incident_id", "classification", "severity", "confidence", "summary", "evidence", "suggested_fix_strategy"],
+  "properties": {
+    "incident_id": {"type": "string"},
+    "classification": {"enum": ["code_defect", "config_regression", "dependency", "resource", "insufficient_evidence"]},
+    "severity": {"enum": ["sev1", "sev2", "sev3", "sev4"]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "summary": {"type": "string", "maxLength": 600},
+    "suspected_location": {
+      "type": "object",
+      "required": ["file", "line"],
+      "properties": {"file": {"type": "string"}, "line": {"type": "integer", "minimum": 1}, "function": {"type": "string"}, "commit": {"type": "string"}},
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "array", "minItems": 1, "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["kind", "ref", "claim"],
+        "properties": {
+          "kind": {"enum": ["log_line", "stack_frame", "commit", "metric"]},
+          "ref": {"type": "string", "description": "log line id, file:line, or commit sha present in the context bundle"},
+          "claim": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "ruled_out": {"type": "array", "items": {"type": "string"}},
+    "suggested_fix_strategy": {"type": "string"}
+  },
+  "additionalProperties": false
+}

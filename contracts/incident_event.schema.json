@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IncidentEvent",
+  "type": "object",
+  "required": ["incident_id", "source", "service", "alarm_name", "detected_at", "window_start", "window_end", "log_group"],
+  "properties": {
+    "incident_id": {"type": "string", "description": "sha256(alarm_name + floor(detected_at / dedup window))"},
+    "source": {"const": "cloudwatch"},
+    "service": {"type": "string"},
+    "alarm_name": {"type": "string"},
+    "detected_at": {"type": "string", "format": "date-time"},
+    "window_start": {"type": "string", "format": "date-time"},
+    "window_end": {"type": "string", "format": "date-time"},
+    "log_group": {"type": "string"},
+    "repo": {"type": "string", "description": "owner/name of the service's source repo"}
+  },
+  "additionalProperties": false
+}

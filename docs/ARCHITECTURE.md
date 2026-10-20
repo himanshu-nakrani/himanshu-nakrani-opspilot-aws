@@ -1,0 +1,48 @@
+# Architecture
+
+## Data flow
+```
+sample-service (Lambda, Python)  ──logs──►  CloudWatch Logs
+        │                                     │ metric filter: ERROR|Traceback
+        ▼                                     ▼
+                                   CloudWatch Alarm (ALARM)
+                                              │
+                                   EventBridge rule (aws.cloudwatch / Alarm State Change)
+                                              │  dedup: idempotency key = alarm + 15-min window (DynamoDB)
+                                              ▼
+                                   Step Functions: opspilot (Standard)
+  ┌──────────────┬──────────────┬──────────────┬──────────────┬──────────────┬──────────────┐
+  │ CollectCtx   │ RunRCA       │ Route        │ CreateTicket │ ProposeFix   │ Verify       │ Notify
+  │ Lambda       │ Lambda →     │ Choice on    │ Lambda →     │ Lambda/      │ CodeBuild    │ Lambda →
+  │ Logs Insights│ Bedrock      │ classification│ Jira REST v3 │ Fargate →    │ (sync .sync) │ Slack webhook
+  │ + GitHub API │ Converse +   │ + confidence │              │ Bedrock +    │ repro test   │ + SNS email
+  │ (blame/commits)│ toolUse JSON│              │              │ GitHub PR    │ main vs fix  │
+  └──────────────┴──────────────┴──────────────┴──────────────┴──────────────┴──────────────┘
+                     every step writes to DynamoDB `opspilot-incidents` (state + audit trail)
+```
+
+## Components
+| Component | AWS service | Responsibility | Inputs → outputs (schemas) |
+|---|---|---|---|
+| Ingest + dedup | EventBridge + DynamoDB conditional put | Skip duplicate alarms inside the window | alarm event → `incident_event` |
+| CollectContext | Lambda | Logs Insights query (±10 min), parse the top stack trace, map frames to repo files, last N commits on those files | `incident_event` → `context_bundle` |
+| RunRCA | Lambda + Bedrock Converse API | Tool-use loop (max 6 turns) with read-only tools: `query_logs`, `get_file`, `get_commit_diff`. Final answer forced through the `submit_rca` tool | `context_bundle` → `rca_result` |
+| Route | Step Functions Choice | `confidence < 0.6` or `insufficient_evidence` → ticket+notify only | `rca_result` |
+| CreateTicket | Lambda | Jira issue: summary, ADF description, labels `opspilot`, `cls:<classification>`, severity → priority | `rca_result` → `ticket_ref` |
+| ProposeFix | Lambda (Fargate if repo > 250 MB) | Shallow clone, Bedrock produces `{repro_test, patch}` as unified diffs, `git apply --check`, push `opspilot/<jira-key>`, open PR | `rca_result` + `ticket_ref` → `pr_ref` |
+| Verify | CodeBuild (`startBuild.sync`) | 1) repro test on base must FAIL; 2) full suite + repro test on fix branch must PASS | `pr_ref` → `verification_result` |
+| Notify | Lambda | Slack Block Kit message + SNS: classification, RCA summary, evidence, Jira link, PR link, verification verdict | all → message |
+
+## Guardrails
+- **Structured output only.** Bedrock tool schemas mirror contracts/rca_output.schema.json. Validate in Lambda; one repair retry, then route to `insufficient_evidence`.
+- **Evidence grounding.** Each `evidence[].ref` must point to a log line ID or file:line that exists in the context bundle. Lambda checks this; unverifiable claims lower confidence to at most 0.4.
+- **Patch limits.** At most 3 files and 80 changed lines. No changes to CI config, IaC or dependency manifests. If a patch breaks the limits, still file the ticket and add a note, but open no PR.
+- **Retry cap.** If verification fails, ProposeFix runs one more time with the failure log. After that the PR is marked draft and a "needs human" label is added.
+- **Secrets.** Jira token, GitHub token and Slack webhook live in Secrets Manager. Log payloads are redacted (emails, tokens, IPs) before any Bedrock call.
+- **Cost guard.** Max 1 RCA per alarm per 15 min; per-run token budget enforced in RunRCA.
+
+## Observability of OpsPilot itself
+Every run records: model ID, tokens in and out, tool calls, latency per step, classification, confidence, PR merged/closed/reverted (from a GitHub webhook, later). These feed the eval metrics in IMPLEMENTATION_SPEC §M6.
+
+## Deliberately out of scope for the POC
+Multi-service causal analysis, metric anomaly detection, auto-merge or auto-deploy, multi-repo support, GitLab, Datadog/Sentry ingestion (the design is source-neutral: only CollectContext changes).
