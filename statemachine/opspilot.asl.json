@@ -1,7 +1,19 @@
 {
   "Comment": "OpsPilot incident pipeline. Invariant: every execution ends in Notify (or NotifyFailed if Notify itself cannot run). Placeholders are substituted by infra/pipeline_stack.py.",
-  "StartAt": "CollectContext",
+  "StartAt": "Entry",
   "States": {
+    "Entry": {
+      "Type": "Choice",
+      "Comment": "An alarm execution has no action. It is analyzed and stops before any pull request. action raise_pr is the only way into ProposeFix, so a pull request is never opened by the alarm path.",
+      "Choices": [
+        {
+          "Variable": "$.action",
+          "StringEquals": "raise_pr",
+          "Next": "ProposeFix"
+        }
+      ],
+      "Default": "CollectContext"
+    },
     "CollectContext": {
       "Type": "Task",
       "Resource": "${CollectContextFnArn}",
@@ -142,23 +154,12 @@
     },
     "Route": {
       "Type": "Choice",
+      "Comment": "A fix pull request is a choice on the incident screen. The pipeline records the analysis and stops here. ProposeFix stays in this machine for the dashboard to invoke as its own Lambda, not as the next state.",
       "Choices": [
         {
-          "And": [
-            {
-              "Variable": "$.error",
-              "IsPresent": false
-            },
-            {
-              "Variable": "$.rca.classification",
-              "StringEquals": "code_defect"
-            },
-            {
-              "Variable": "$.rca.confidence",
-              "NumericGreaterThanEquals": 0.6
-            }
-          ],
-          "Next": "ProposeFix"
+          "Variable": "$.rca.classification",
+          "IsPresent": true,
+          "Next": "Notify"
         }
       ],
       "Default": "Notify"

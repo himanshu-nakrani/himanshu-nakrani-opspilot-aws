@@ -86,9 +86,9 @@ AWS's modular foundation for running agents in production:
 | Ingest + dedup | EventBridge + DynamoDB conditional put | Skip duplicate alarms inside the window | alarm event → `incident_event` |
 | CollectContext | Lambda | Logs Insights query (±10 min), parse the top stack trace, map frames to repo files, last N commits on those files | `incident_event` → `context_bundle` |
 | RunRCA | Lambda + Bedrock Converse API | Tool-use loop (max 6 turns) with read-only tools: `query_logs`, `get_file`, `get_commit_diff`. Final answer forced through the `submit_rca` tool | `context_bundle` → `rca_result` |
-| Route | Step Functions Choice | `confidence < 0.6` or `insufficient_evidence` → ticket+notify only | `rca_result` |
+| Route | Step Functions Choice | Always continues to Notify. The state machine does not open a pull request. A diff is offerable only for `code_defect` at confidence ≥ 0.6 with a stack frame (`route_rca`). | `rca_result` |
 | CreateTicket | Lambda | AWS Systems Manager OpsCenter OpsItem (IAM auth): title, Markdown RCA description, Source `OpsPilot`, severity sev1-4 → OpsCenter severity 1-4 and priority 1-4, searchable operational data `opspilot:incident_id` (idempotency). Ticket id/URL/severity/status and a timeline are mirrored into the DynamoDB incidents table | `rca_result` + execution input → `ticket_ref` |
-| ProposeFix | Lambda (Fargate if repo > 250 MB) | Shallow clone, Bedrock produces `{repro_test, patch}` as unified diffs, `git apply --check`, push `opspilot/<opsitem-id>`, open PR | `rca_result` + `ticket_ref` → `pr_ref` |
+| ProposeFix | Lambda, started from the incident screen | Not an automatic step. Raise PR commits the known `get_order` patch and repro test on `opspilot/<ticket>` and opens a CodeCommit pull request. I'll apply changes myself stores that choice and opens nothing. | `rca_result` + `ticket_ref` → `pr_ref` |
 | Verify | CodeBuild (`startBuild.sync`) | 1) repro test on base must FAIL; 2) full suite + repro test on fix branch must PASS | `pr_ref` → `verification_result` |
 | Notify | Lambda | Slack Block Kit message + SNS: classification, RCA summary, evidence, OpsItem link, PR link, verification verdict; mirrors the outcome onto the OpsItem (verified PR → InProgress, otherwise stays Open; never auto-Resolved) | all → message |
 

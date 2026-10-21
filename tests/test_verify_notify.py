@@ -149,6 +149,23 @@ def test_sns_notification():
     assert sent is True
 
 
+def test_notify_without_pr_waits_for_a_human_choice(sample_pipeline_state, monkeypatch):
+    rca, ticket, _pr, _verify = sample_pipeline_state
+    monkeypatch.setattr("opspilot.notify.update_incident", lambda *a, **k: None)
+    monkeypatch.setattr("opspilot.notify.sync_ticket_status", lambda *a, **k: ("Open", False))
+    res = notify_handler({"rca": rca.model_dump(), "ticket": ticket.model_dump()})
+    assert res["status"] == "notified"
+    written = {}
+
+    def capture(incident_id, fields, dynamodb_client=None):
+        written.update(fields)
+
+    monkeypatch.setattr("opspilot.notify.update_incident", capture)
+    notify_handler({"rca": rca.model_dump(), "ticket": ticket.model_dump()})
+    assert written["status"] == "AWAITING_CHOICE"
+    assert "HTTPException" in written["patch_diff"]
+
+
 def test_notify_lambda_handler(sample_pipeline_state, monkeypatch):
     rca, ticket, pr, verify = sample_pipeline_state
     monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/test/test/test")

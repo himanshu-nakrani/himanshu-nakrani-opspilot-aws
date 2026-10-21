@@ -254,6 +254,61 @@ def update_ticket(
         raise TicketingError(f"OpsCenter UpdateOpsItem failed for {ticket.key}: {e}") from e
 
 
+def list_opscenter_tickets(ssm_client=None, source: str = "OpsPilot", limit: int = 50) -> list[Dict[str, Any]]:
+    """OpsItems filed by OpsPilot, newest pages first as OpsCenter returns them.
+
+    Each row is JSON-safe. ``created_at`` is an ISO timestamp.
+    """
+    ssm = ssm_client or boto3.client("ssm")
+    region = _region(ssm)
+    summaries: list[Dict[str, Any]] = []
+    token: Optional[str] = None
+    while len(summaries) < limit:
+        kwargs: Dict[str, Any] = {
+            "OpsItemFilters": [{"Key": "Source", "Operator": "Equal", "Values": [source]}],
+            "MaxResults": min(50, limit - len(summaries)),
+        }
+        if token:
+            kwargs["NextToken"] = token
+        resp = ssm.describe_ops_items(**kwargs)
+        summaries.extend(resp.get("OpsItemSummaries") or [])
+        token = resp.get("NextToken")
+        if not token:
+            break
+
+    rows: list[Dict[str, Any]] = []
+    for item in summaries:
+        ops_item_id = item.get("OpsItemId")
+        if not ops_item_id:
+            continue
+        operational = item.get("OperationalData") or {}
+        incident_id = (operational.get(INCIDENT_KEY) or {}).get("Value")
+        rows.append(
+            {
+                "key": ops_item_id,
+                "title": item.get("Title") or ops_item_id,
+                "status": item.get("Status") or "Open",
+                "severity": item.get("Severity"),
+                "priority": item.get("Priority"),
+                "created_at": _iso(item.get("CreatedTime")),
+                "updated_at": _iso(item.get("LastModifiedTime")),
+                "incident_id": incident_id,
+                "url": opsitem_url(ops_item_id, region),
+                "source": "opscenter",
+                "category": item.get("Category"),
+            }
+        )
+    return rows
+
+
+def _iso(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
 def get_status(ticket: TicketRef, ssm_client=None) -> Optional[str]:
     """Current OpsItem status as set in OpsCenter (by a human or by OpsPilot)."""
     try:

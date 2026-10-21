@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ExternalLink, FileCode, GitBranch, ListChecks, Ticket } from 'lucide-react';
 import { Incident } from '../types';
-import { errorMessage, fetchIncident, isAbortError } from '../api';
+import { chooseFix, errorMessage, fetchIncident, isAbortError } from '../api';
 import { classificationBadge, confidenceTone, severityBadge, SOURCE_LABEL, statusBadge } from '../lib/badges';
 import { formatTimestamp, humanize } from '../lib/format';
 import { Modal } from './Modal';
@@ -10,9 +10,21 @@ import { AgentTrace } from './AgentTrace';
 interface IncidentDetailModalProps {
   incident: Incident | null;
   onClose: () => void;
+  onUpdated?: (incident: Incident) => void;
 }
 
 const sectionTitle = 'text-xs font-semibold uppercase tracking-wider text-ink-300 mb-2';
+
+const CLOSED_FIX = new Set(['APPLY_MYSELF', 'PR_OPENED', 'VERIFIED']);
+
+/** Which fix buttons the incident screen should show. Raise PR only when a generator exists. */
+export function fixChoiceActions(incident: Pick<Incident, 'patch_diff' | 'pr_url' | 'status' | 'can_raise_pr'>): {
+  applyMyself: boolean;
+  raisePr: boolean;
+} {
+  const open = Boolean(incident.patch_diff) && !incident.pr_url && !CLOSED_FIX.has(incident.status);
+  return { applyMyself: open, raisePr: open && incident.can_raise_pr === true };
+}
 
 function diffLineClass(line: string): string {
   if (line.startsWith('+++') || line.startsWith('---')) return 'text-ink-300 font-semibold';
@@ -22,14 +34,18 @@ function diffLineClass(line: string): string {
   return 'text-ink-300';
 }
 
-export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incident: initial, onClose }) => {
+export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incident: initial, onClose, onUpdated }) => {
   const [incident, setIncident] = useState<Incident | null>(initial);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [choicePending, setChoicePending] = useState<'apply_myself' | 'raise_pr' | null>(null);
+  const [choiceError, setChoiceError] = useState<string | null>(null);
 
   // Show the list copy immediately, then load the current record so status/PR fields are fresh.
   useEffect(() => {
     setIncident(initial);
     setRefreshError(null);
+    setChoiceError(null);
+    setChoicePending(null);
     if (!initial) return;
     const controller = new AbortController();
     fetchIncident(initial.incident_id, controller.signal)
@@ -48,6 +64,21 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
   const tone = confidenceTone(pct);
   const evidence = incident.evidence ?? [];
   const loc = incident.suspected_location;
+  const actions = fixChoiceActions(incident);
+
+  const choose = (action: 'apply_myself' | 'raise_pr') => {
+    setChoicePending(action);
+    setChoiceError(null);
+    chooseFix(incident.incident_id, action)
+      .then((next) => {
+        setIncident(next);
+        onUpdated?.(next);
+      })
+      .catch((e) => {
+        if (!isAbortError(e)) setChoiceError(errorMessage(e));
+      })
+      .finally(() => setChoicePending(null));
+  };
 
   return (
     <Modal
@@ -141,6 +172,50 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
           </div>
         )}
       </section>
+
+      {actions.applyMyself && (
+        <section className="rounded-lg border border-ink-800 bg-ink-950/50 p-4">
+          <h3 className={sectionTitle}>What should happen to this change?</h3>
+          <p className="text-xs text-ink-300 mb-3">
+            {actions.raisePr
+              ? 'The pipeline stopped after the analysis. Nothing is committed until you raise a pull request.'
+              : 'OpsPilot cannot open a pull request for this change. You can still apply the diff yourself.'}
+            {loc ? ` The change is in ${loc.file}${loc.function ? ` (${loc.function})` : ''}.` : ''}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={choicePending !== null}
+              onClick={() => choose('apply_myself')}
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-ink-600 text-ink-100 hover:bg-ink-800 disabled:opacity-60"
+            >
+              {choicePending === 'apply_myself' ? 'Saving…' : "I'll apply changes myself"}
+            </button>
+            {actions.raisePr && (
+              <button
+                type="button"
+                disabled={choicePending !== null}
+                onClick={() => choose('raise_pr')}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-signal-500/15 hover:bg-signal-500/25 text-signal-200 border border-signal-500/40 disabled:opacity-60"
+              >
+                {choicePending === 'raise_pr' ? 'Opening pull request…' : 'Raise PR'}
+              </button>
+            )}
+          </div>
+          {choiceError && (
+            <p role="alert" className="mt-3 text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-lg p-2">
+              {choiceError}
+            </p>
+          )}
+        </section>
+      )}
+
+      {incident.status === 'APPLY_MYSELF' && (
+        <p role="status" className="text-xs text-ink-200 bg-ink-900 border border-ink-700 rounded-lg p-3">
+          You chose to apply this change yourself. No pull request was opened.
+          {loc ? ` Edit ${loc.file}${loc.line ? `:${loc.line}` : ''}.` : ''}
+        </p>
+      )}
 
       {incident.patch_diff && (
         <section>

@@ -16,7 +16,10 @@ FIXABLE_CLASSES = ("code_defect",)
 
 
 def determine_route(classification: str, confidence: float, threshold: float = 0.6) -> RouteTarget:
-    """Route on classification and confidence alone (used by the Step Functions Choice).
+    """Whether this classification is eligible for a suggested diff.
+
+    The state machine does not open a pull request from this result. The incident
+    screen does, after the operator chooses Raise PR.
 
     - code_defect with confidence >= threshold -> propose_fix
     - everything else (config_regression, dependency, resource, insufficient_evidence,

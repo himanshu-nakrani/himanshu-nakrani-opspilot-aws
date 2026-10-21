@@ -39,7 +39,7 @@ See docs/DEMO_RUNBOOK.md for every subcommand and the demo flow.
 2. **The issue type decides the route:** `code_defect` → fix PR; `config_regression` → ticket + notify until a revert agent exists; `dependency`/`resource` → ticket + notify only.
 3. **A verified PR, not just a green build.** The patch agent must add a reproduction test that fails on `main` and passes on the fix branch. CodeBuild runs both checks.
 4. **Least privilege.** The LLM gets no AWS write permissions. Source control is AWS CodeCommit with IAM only (no Git tokens): the fix Lambda's role is scoped to the one repo ARN and can create branches/commits/PRs but has no merge permission, so a human merges every fix.
-5. **The model is configurable** (`BEDROCK_MODEL_ID`). The plan named Claude 3.5 Sonnet. Pick the current Claude Sonnet model or inference profile available in your Bedrock region.
+5. **The model is configurable** (`BEDROCK_MODEL_ID`). The default is the Claude Haiku 5.5 US inference profile, `us.anthropic.claude-haiku-5-5`.
 
 ## Agent Stack: AWS Strands Agents SDK + AgentCore-style components
 > **Honesty note:** the agent loop uses the real Strands SDK (`strands-agents`) and Bedrock.
@@ -53,7 +53,8 @@ See docs/DEMO_RUNBOOK.md for every subcommand and the demo flow.
   `code_defect` without a grounded stack frame/commit, makes the result **abstain** (`insufficient_evidence`).
 - Bedrock errors, empty/`max_tokens` responses, malformed output after one repair, or no `submit_rca`
   within `max_turns` all **abstain**. The keyword heuristic is offline-only and capped below the PR threshold.
-- A PR needs `code_defect` + confidence ≥ 0.6 + a `suspected_location` backed by matching stack-frame evidence.
+- A suggested diff needs `code_defect` + confidence ≥ 0.6 + a `suspected_location` backed by matching stack-frame evidence.
+  The pipeline stops there. The incident screen offers two actions: apply the diff yourself, or raise a CodeCommit pull request.
   `config_regression` files a ticket and notifies until a revert agent exists.
 - The fix agent refuses anything but the planted sample bug, and never opens a PR if a git step fails.
 - Model tools are sandboxed: `get_file` stays inside the repo (no absolute paths, `..`, `.git/`, `.env*`);

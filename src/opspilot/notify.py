@@ -10,6 +10,8 @@ import httpx
 from opspilot.audit import append_timeline, update_incident
 from opspilot.config import is_live
 from opspilot.contracts import PrRef, RcaResult, TicketRef, VerificationResult
+from opspilot.fix.agent import suggested_diff
+from opspilot.route import route_rca
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -227,6 +229,8 @@ def sync_ticket_status(
         status, note = "Open", "Automated fix not verified; needs human."
     elif final_status == "FAILED":
         status, note = "Open", f"OpsPilot pipeline error: {(error or '')[:500]}"
+    elif final_status == "AWAITING_CHOICE":
+        status, note = "Open", "RCA delivered. Open the incident to apply the change yourself or raise a pull request."
     else:
         status, note = "Open", "RCA delivered; no automated fix proposed. On-call action required."
     extra = {"run_status": final_status, "verdict": verify.verdict if verify else "unverified",
@@ -294,10 +298,23 @@ def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, A
     incident_id = (rca.incident_id if rca else None) or event.get("incident_id", "unknown")
     if not (slack_sent or sns_sent) and is_live():
         raise RuntimeError("No notification channel delivered the message")
-    final_status = "FAILED" if error_str else ("VERIFIED" if verify and verify.verdict == "verified" else
-                    "NEEDS_HUMAN" if (pr and pr.status == "needs_human") else "NOTIFIED")
+    offered_diff = suggested_diff(rca) if rca and pr is None and route_rca(rca) == "propose_fix" else None
+    if error_str:
+        final_status = "FAILED"
+    elif verify and verify.verdict == "verified":
+        final_status = "VERIFIED"
+    elif pr and pr.status == "needs_human":
+        final_status = "NEEDS_HUMAN"
+    elif pr and pr.pr_url:
+        final_status = "PR_OPENED"
+    elif offered_diff:
+        final_status = "AWAITING_CHOICE"
+    else:
+        final_status = "NOTIFIED"
     ticket_status, ticket_synced = sync_ticket_status(ticket, final_status, pr, verify, error_str)
-    fields = {"status": final_status, "verdict": verify.verdict if verify else "unverified"}
+    fields: Dict[str, str] = {"status": final_status, "verdict": verify.verdict if verify else "unverified"}
+    if offered_diff and final_status == "AWAITING_CHOICE":
+        fields["patch_diff"] = offered_diff
     if ticket_status:
         fields["ticket_status"] = ticket_status
     update_incident(incident_id, fields)

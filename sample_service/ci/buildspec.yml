@@ -1,0 +1,38 @@
+version: 0.2
+# Publish a new Lambda version, then hand CodeDeploy an AppSpec that shifts the
+# live alias onto it. The function URL points at that alias, so traffic moves
+# only when this deployment succeeds.
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - python3 -m pip install --upgrade pip
+      - python3 -m pip install -r sample_service/requirements.txt -t package
+  build:
+    commands:
+      - mkdir -p package
+      - cp -r sample_service package/sample_service
+      - rm -rf package/sample_service/tests package/sample_service/ci package/sample_service/**/__pycache__
+      - printf '%s\n' "${CODEBUILD_RESOLVED_SOURCE_VERSION}" > package/BUILD_SHA
+      - (cd package && zip -qr ../function.zip .)
+      - aws lambda update-function-code --function-name "$FUNCTION_NAME" --zip-file fileb://function.zip
+      - aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+      - TARGET=$(aws lambda publish-version --function-name "$FUNCTION_NAME" --query Version --output text)
+      - CURRENT=$(aws lambda get-alias --function-name "$FUNCTION_NAME" --name "$ALIAS_NAME" --query FunctionVersion --output text)
+      - test "$CURRENT" != "$TARGET"
+      - |
+        cat > appspec.yml <<EOF
+        version: 0.0
+        Resources:
+          - SampleFunction:
+              Type: AWS::Lambda::Function
+              Properties:
+                Name: "${FUNCTION_NAME}"
+                Alias: "${ALIAS_NAME}"
+                CurrentVersion: "${CURRENT}"
+                TargetVersion: "${TARGET}"
+        EOF
+artifacts:
+  files:
+    - appspec.yml

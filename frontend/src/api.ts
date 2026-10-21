@@ -1,4 +1,4 @@
-import { AgentRun, AgentRunSummary, EvalsReport, Incident, Scenario, Stats, TriggerResponse } from './types';
+import { AgentRun, AgentRunSummary, EvalsReport, Incident, Scenario, Stats, TicketList, TicketView, TriggerResponse } from './types';
 
 const API_BASE = '/api';
 
@@ -44,6 +44,13 @@ export const fetchStats = (signal?: AbortSignal) => request<Stats>('/stats', { s
 
 export const fetchScenarios = (signal?: AbortSignal) => request<Scenario[]>('/scenarios', { signal });
 
+export const chooseFix = (incidentId: string, action: 'apply_myself' | 'raise_pr') =>
+  request<Incident>(`/incidents/${encodeURIComponent(incidentId)}/fix-choice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
+
 export const triggerSimulation = (scenario?: string) =>
   request<TriggerResponse>('/trigger', {
     method: 'POST',
@@ -52,6 +59,9 @@ export const triggerSimulation = (scenario?: string) =>
   });
 
 export const fetchEvals = (signal?: AbortSignal) => request<EvalsReport>('/evals', { signal });
+
+export const fetchTickets = (view: TicketView = 'open', signal?: AbortSignal) =>
+  request<TicketList>(`/tickets?view=${encodeURIComponent(view)}`, { signal });
 
 export function errorMessage(e: unknown, fallback = 'Something went wrong'): string {
   if (e instanceof Error && e.message) return e.message;

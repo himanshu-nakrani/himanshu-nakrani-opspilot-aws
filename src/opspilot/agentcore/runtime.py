@@ -200,7 +200,11 @@ class AgentCoreOfflineModel(Model):
                         {"kind": "stack_frame", "ref": f"{top_frame.file}:{top_frame.line}", "claim": f"Exception in {top_frame.function}"},
                     ],
                     "ruled_out": ["dependency", "resource"],
-                    "suggested_fix_strategy": "Add validation for missing order ID and return HTTP 404 HTTPException if not found.",
+                    "suggested_fix_strategy": (
+                        "Validate the request body and return 422 when customer_id is missing."
+                        if top_frame.function == "create_order"
+                        else "Add validation for missing order ID and return HTTP 404 HTTPException if not found."
+                    ),
                 }
 
             resp = {

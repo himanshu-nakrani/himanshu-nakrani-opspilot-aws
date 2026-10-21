@@ -4,6 +4,8 @@ import json
 import os
 import re
 from pathlib import Path
+
+import yaml
 import aws_cdk as cdk
 from aws_cdk import (
     Aws,
@@ -55,8 +57,10 @@ class PipelineStack(Stack):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
-        source_repo = core_stack.source_repo
+        bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-5-5")
+        # Fix pull requests and verification run against the storefront repo, which is
+        # what CodePipeline deploys. The platform repo in CoreStack is separate.
+        source_repo = sample_service_stack.app_repo
 
         common_env = {
             "INCIDENTS_TABLE_NAME": core_stack.incidents_table.table_name,
@@ -216,7 +220,8 @@ class PipelineStack(Stack):
                     "CODECOMMIT_CLONE_URL": codebuild.BuildEnvironmentVariable(value=source_repo.repository_clone_url_http),
                 },
             ),
-            build_spec=codebuild.BuildSpec.from_source_filename("src/opspilot/verify/buildspec.yml"),
+            # Inlined so the spec can stay in this repo while the clone is the app repo.
+            build_spec=_verify_buildspec(),
         )
 
         # 7b. ParseVerification Function: CodeBuild Build -> VerificationResult
@@ -367,3 +372,10 @@ class PipelineStack(Stack):
             )
         )
         return role
+
+
+def _verify_buildspec() -> codebuild.BuildSpec:
+    path = Path(__file__).resolve().parent.parent / "src" / "opspilot" / "verify" / "buildspec.yml"
+    spec = yaml.safe_load(path.read_text(encoding="utf-8"))
+    spec["version"] = "0.2"
+    return codebuild.BuildSpec.from_object(spec)

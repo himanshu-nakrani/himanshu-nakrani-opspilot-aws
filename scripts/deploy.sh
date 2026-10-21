@@ -30,7 +30,7 @@ export PYTHONPATH="src:.${PYTHONPATH:+:$PYTHONPATH}"
 export JSII_RUNTIME_PACKAGE_CACHE_ROOT="${JSII_RUNTIME_PACKAGE_CACHE_ROOT:-/tmp/jsii-cache-$(id -u)}"
 # Source control is AWS CodeCommit (IAM auth, no tokens). CoreStack creates the repo, or imports it if it exists.
 export CODECOMMIT_REPO="${CODECOMMIT_REPO:-opspilot-aws}"
-export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}"
+export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-us.anthropic.claude-haiku-5-5}"
 OUTPUTS_FILE="$ROOT/cdk-outputs.json"
 
 c_blue=$'\033[34m'; c_red=$'\033[31m'; c_yel=$'\033[33m'; c_grn=$'\033[32m'; c_off=$'\033[0m'

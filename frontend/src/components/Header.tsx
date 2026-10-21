@@ -4,6 +4,8 @@ import { btn, focusRing } from '../ui/styles';
 import { formatRelative } from '../lib/format';
 
 interface HeaderProps {
+  page: 'incidents' | 'tickets';
+  onNavigate: (path: string) => void;
   onTriggerSimulation: () => void;
   onOpenEvals: () => void;
   onOpenAgentCore: () => void;
@@ -32,6 +34,8 @@ const Mark: React.FC = () => (
 );
 
 export const Header: React.FC<HeaderProps> = ({
+  page,
+  onNavigate,
   onTriggerSimulation,
   onOpenEvals,
   onOpenAgentCore,
@@ -58,8 +62,33 @@ export const Header: React.FC<HeaderProps> = ({
           <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-ink-50">
             OpsPilot
           </h1>
-          <span className="hidden sm:inline text-ink-600" aria-hidden="true">/</span>
-          <span className="hidden sm:inline text-[13px] text-ink-300 truncate">Incident console</span>
+          <nav aria-label="Dashboard sections" className="flex items-center gap-1 ml-1 sm:ml-2">
+            {(
+              [
+                ['/', 'Incidents', 'incidents'],
+                ['/tickets', 'Tickets', 'tickets'],
+              ] as const
+            ).map(([path, label, id]) => {
+              const active = page === id;
+              return (
+                <a
+                  key={path}
+                  href={path}
+                  aria-current={active ? 'page' : undefined}
+                  onClick={(e) => {
+                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                    e.preventDefault();
+                    onNavigate(path);
+                  }}
+                  className={`h-7 px-2 inline-flex items-center rounded-md text-xs ${focusRing} ${
+                    active ? 'bg-ink-800 text-ink-50' : 'text-ink-400 hover:text-ink-100 hover:bg-ink-900'
+                  }`}
+                >
+                  {label}
+                </a>
+              );
+            })}
+          </nav>
           <span className="hidden md:inline px-1.5 py-px rounded border border-ink-800 font-mono text-2xs text-ink-400">
             AWS POC
           </span>

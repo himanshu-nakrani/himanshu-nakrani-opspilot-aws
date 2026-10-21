@@ -31,7 +31,7 @@ ALARMS = ["OpsPilotSampleServiceErrors", "OpsPilotSampleService-CheckoutErrors",
           "OpsPilotSampleService-InventoryDbTimeouts", "OpsPilotSampleService-LatencyP95",
           "OpsPilotSampleService-Crashes", "opspilot-executions-failed"]
 OK_STATES = {"CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"}
-DEFAULT_MODEL = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+DEFAULT_MODEL = "us.anthropic.claude-haiku-5-5"
 
 GREEN, RED, YELLOW, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
 failures: list[str] = []
@@ -214,6 +214,25 @@ def verify():
         ok(f"OpsCenter reachable; {len(items)} recent OpsPilot OpsItem(s)")
     except ClientError as e:
         warn(f"OpsCenter query failed for this identity: {e.response['Error']['Code']}")
+
+    print("Sample-service app repo (CodeCommit -> CodePipeline)")
+    cc = s.client("codecommit")
+    try:
+        meta = cc.get_repository(repositoryName="opspilot-sample-service")["repositoryMetadata"]
+        ok(f"repository opspilot-sample-service exists ({meta.get('cloneUrlHttp')})")
+        head = cc.get_branch(repositoryName="opspilot-sample-service", branchName="main")["branch"]["commitId"]
+        ok(f"branch main at {head[:10]}")
+        for path in ("buildspec.yml", "sample_service/app.py"):
+            cc.get_file(repositoryName="opspilot-sample-service", commitSpecifier="main", filePath=path)
+            ok(f"main has {path}")
+    except ClientError as e:
+        bad(f"app repo opspilot-sample-service: {e.response['Error']['Code']}")
+    try:
+        pipe = s.client("codepipeline").get_pipeline(name="opspilot-sample-service")["pipeline"]
+        stages = [stage["name"] for stage in pipe["stages"]]
+        (ok if stages == ["Source", "Build", "Deploy"] else bad)(f"pipeline stages: {' -> '.join(stages)}")
+    except ClientError as e:
+        bad(f"pipeline opspilot-sample-service: {e.response['Error']['Code']}")
 
     print("CodeCommit source repo")
     cc, repo = s.client("codecommit"), repo_name()

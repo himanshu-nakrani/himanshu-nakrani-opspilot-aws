@@ -2,12 +2,14 @@
 
 Each scenario is a believable alarm for sample-service with a pre-written RCA. Only
 ``null_order`` drives real traffic (5 calls to the planted /orders/999 bug); the rest are
-synthetic alarms. Outcomes follow opspilot.route: a PR is proposed only for a code_defect
-at >= 0.60 confidence whose suspected location is named by a stack_frame; everything else
-notifies the SRE.
+synthetic alarms. Outcomes follow opspilot.route: a suggested diff is offered only for a code_defect
+at >= 0.60 confidence whose suspected location is named by a stack_frame. The pipeline
+does not open the pull request; the incident screen does. Everything else notifies the SRE.
 """
 
 from typing import Any, Dict, List, Optional
+
+from opspilot.fix.agent import CREATE_ORDER_PATCH, GET_ORDER_PATCH
 
 DEFAULT_SCENARIO = "null_order"
 
@@ -27,14 +29,7 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
             {"kind": "log_line", "ref": "log-1", "claim": "AttributeError: 'NoneType' object has no attribute 'total'"},
             {"kind": "stack_frame", "ref": "sample_service/app.py:29", "claim": "Exception raised on order.total access"},
         ],
-        "patch_diff": """--- a/sample_service/app.py
-+++ b/sample_service/app.py
-@@ -28,3 +29,5 @@
- def get_order(order_id: str):
-     order: Optional[Order] = ORDERS.get(order_id)
-+    if order is None:
-+        raise HTTPException(status_code=404, detail="Order not found")
-""",
+        "patch_diff": GET_ORDER_PATCH,
         "suggested_fix_strategy": "Return 404 HTTPException if order ID does not exist in store.",
     },
     "missing_field": {
@@ -51,15 +46,7 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
             {"kind": "log_line", "ref": "log-1", "claim": "KeyError: 'customer_id'"},
             {"kind": "stack_frame", "ref": "sample_service/app.py:41", "claim": "payload['customer_id'] accessed directly"},
         ],
-        "patch_diff": """--- a/sample_service/app.py
-+++ b/sample_service/app.py
-@@ -40,2 +40,4 @@
- def create_order(payload: dict):
--    customer_id = payload["customer_id"]
-+    customer_id = payload.get("customer_id")
-+    if not customer_id:
-+        raise HTTPException(status_code=422, detail="customer_id is required")
-""",
+        "patch_diff": CREATE_ORDER_PATCH,
         "suggested_fix_strategy": "Validate the request body and return 422 when customer_id is missing.",
     },
     "divide_by_zero": {
@@ -214,4 +201,4 @@ def expected_status(s: Dict[str, Any]) -> str:
     ref = f"{loc['file']}:{loc['line']}"
     if not any(e["kind"] == "stack_frame" and e["ref"] == ref for e in s["evidence"]):
         return "NOTIFIED"
-    return "PROPOSED"
+    return "AWAITING_CHOICE"

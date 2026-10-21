@@ -195,7 +195,7 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
                     <span className="flex items-center gap-1.5 font-mono text-2xs text-ink-500">
                       <span className="capitalize">{humanize(sc.classification)}</span>
                       <span aria-hidden="true">·</span>
-                      <span>{sc.expected_outcome === 'PROPOSED' ? 'opens fix PR' : 'notifies SRE'}</span>
+                      <span>{sc.expected_outcome === 'AWAITING_CHOICE' ? 'fix ready to review' : 'notifies SRE'}</span>
                       {sc.live_probe && (
                         <>
                           <span aria-hidden="true">·</span>

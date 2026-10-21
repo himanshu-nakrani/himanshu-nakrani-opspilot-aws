@@ -20,6 +20,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from infra.app_delivery import attach_app_delivery
 from infra.bundling import python_lambda_code
 
 ALARM_PREFIX = "OpsPilotSampleService"
@@ -69,9 +70,9 @@ class SampleServiceStack(Stack):
             environment={"ENV": "demo"},
         )
 
-        # Public URL so the demo can hit the service with curl. It only serves the
-        # demo storefront; each request costs a few ms of a 256 MB Lambda.
-        self.function_url = self.service_fn.add_function_url(auth_type=lambda_.FunctionUrlAuthType.NONE)
+        # Public URL is attached to the live alias inside attach_app_delivery, so it
+        # follows CodeDeploy traffic shifts rather than $LATEST.
+        attach_app_delivery(self, self.service_fn)
 
         self.alarms: dict = {}
         error_metrics = {}

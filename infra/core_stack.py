@@ -72,6 +72,12 @@ class CoreStack(Stack):
             )
             repo.apply_removal_policy(RemovalPolicy.RETAIN)
             self.source_repo = repo
+        # The pipeline now imports the storefront repo instead of this one. These exports stay
+        # for one release: this stack updates first, and CloudFormation will not drop an export
+        # the previous pipeline template still imports.
+        self.export_value(self.source_repo.repository_arn)
+        self.export_value(self.source_repo.repository_name)
+        self.export_value(self.source_repo.repository_clone_url_http)
         cdk.CfnOutput(self, "CodeCommitRepoName", value=self.source_repo.repository_name)
         cdk.CfnOutput(self, "CodeCommitCloneUrlHttp", value=self.source_repo.repository_clone_url_http)
 

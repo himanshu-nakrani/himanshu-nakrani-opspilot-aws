@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Incident } from './types';
 import { useDashboardData } from './hooks/useDashboardData';
 import { Header } from './components/Header';
@@ -6,6 +6,7 @@ import { StatsCards } from './components/StatsCards';
 import { ArchitectureBanner } from './components/ArchitectureBanner';
 import { IncidentBreakdown } from './components/IncidentBreakdown';
 import { IncidentList } from './components/IncidentList';
+import { TicketsPage } from './components/TicketsPage';
 import { IncidentDetailModal } from './components/IncidentDetailModal';
 import { TriggerSimulationModal } from './components/TriggerSimulationModal';
 import { EvalsModal } from './components/EvalsModal';
@@ -15,7 +16,23 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 
 type Overlay = { kind: 'incident'; incident: Incident } | { kind: 'trigger' } | { kind: 'evals' } | { kind: 'agentcore' } | { kind: 'runs' } | null;
 
+function usePage(): [string, (path: string) => void] {
+  const [path, setPath] = useState(() => window.location.pathname);
+  useEffect(() => {
+    const sync = () => setPath(window.location.pathname);
+    window.addEventListener('popstate', sync);
+    return () => window.removeEventListener('popstate', sync);
+  }, []);
+  const navigate = (next: string) => {
+    if (window.location.pathname !== next) window.history.pushState({}, '', next);
+    setPath(next);
+  };
+  return [path, navigate];
+}
+
 export const App: React.FC = () => {
+  const [path, navigate] = usePage();
+  const page = path === '/tickets' ? 'tickets' : 'incidents';
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [filterClass, setFilterClass] = useState<string>('all');
@@ -36,13 +53,15 @@ export const App: React.FC = () => {
   return (
     <div className="min-h-screen flex flex-col bg-ink-950">
       <a
-        href="#incident-stream-heading"
+        href={page === 'tickets' ? '#tickets-heading' : '#incident-stream-heading'}
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-2 focus:rounded-md focus:bg-ink-50 focus:text-ink-950 focus:text-xs"
       >
-        Skip to incidents
+        {page === 'tickets' ? 'Skip to tickets' : 'Skip to incidents'}
       </a>
 
       <Header
+        page={page}
+        onNavigate={navigate}
         onTriggerSimulation={() => setOverlay({ kind: 'trigger' })}
         onOpenEvals={() => setOverlay({ kind: 'evals' })}
         onOpenAgentCore={() => setOverlay({ kind: 'agentcore' })}
@@ -56,8 +75,16 @@ export const App: React.FC = () => {
       />
 
       <main className="flex-1 w-full max-w-[1440px] mx-auto px-4 sm:px-6 py-6 space-y-6">
-        <StatsCards stats={data.stats} />
+        {page === 'incidents' && <StatsCards stats={data.stats} />}
 
+        {page === 'tickets' ? (
+          <TicketsPage
+            onOpenIncident={(incidentId) => {
+              const incident = data.incidents.find((item) => item.incident_id === incidentId);
+              if (incident) setOverlay({ kind: 'incident', incident });
+            }}
+          />
+        ) : (
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] items-start">
           <section aria-labelledby="incident-stream-heading" className="min-w-0 space-y-3">
             <div className="flex items-baseline justify-between gap-3">
@@ -84,6 +111,7 @@ export const App: React.FC = () => {
             <ArchitectureBanner />
           </aside>
         </div>
+        )}
       </main>
 
       <footer className="border-t border-ink-800 bg-ink-950">
@@ -107,7 +135,15 @@ export const App: React.FC = () => {
         </div>
       </footer>
 
-      <IncidentDetailModal incident={overlay?.kind === 'incident' ? overlay.incident : null} onClose={close} />
+      <IncidentDetailModal
+        incident={overlay?.kind === 'incident' ? overlay.incident : null}
+        onClose={close}
+        onUpdated={(incident) => {
+          data.upsertIncident(incident);
+          data.reloadStats();
+          setOverlay({ kind: 'incident', incident });
+        }}
+      />
       <TriggerSimulationModal
         isOpen={overlay?.kind === 'trigger'}
         onClose={close}

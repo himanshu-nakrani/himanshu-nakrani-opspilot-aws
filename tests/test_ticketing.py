@@ -62,6 +62,53 @@ def rca():
     )
 
 
+def test_list_opscenter_tickets_pages_and_maps_rows():
+    from datetime import datetime, timezone
+
+    class ListingSSM:
+        class _Meta:
+            region_name = "us-east-1"
+
+        meta = _Meta()
+
+        def describe_ops_items(self, **kwargs):
+            assert kwargs["OpsItemFilters"] == [{"Key": "Source", "Operator": "Equal", "Values": ["OpsPilot"]}]
+            if kwargs.get("NextToken"):
+                return {
+                    "OpsItemSummaries": [
+                        {
+                            "OpsItemId": "oi-bbbbbbbbbbbb",
+                            "Title": "still open",
+                            "Status": "InProgress",
+                            "Severity": "3",
+                            "CreatedTime": datetime(2026, 1, 2, tzinfo=timezone.utc),
+                            "OperationalData": {"opspilot:incident_id": {"Value": "inc-b"}},
+                        }
+                    ]
+                }
+            return {
+                "NextToken": "page-2",
+                "OpsItemSummaries": [
+                    {
+                        "OpsItemId": "oi-aaaaaaaaaaaa",
+                        "Title": "[OpsPilot] code_defect: missing order",
+                        "Status": "Open",
+                        "Severity": "2",
+                        "Priority": 2,
+                        "CreatedTime": "2026-01-01T00:00:00+00:00",
+                        "OperationalData": {"opspilot:incident_id": {"Value": "inc-a"}},
+                    }
+                ],
+            }
+
+    rows = ticketing.list_opscenter_tickets(ssm_client=ListingSSM())
+    assert [row["key"] for row in rows] == ["oi-aaaaaaaaaaaa", "oi-bbbbbbbbbbbb"]
+    assert rows[0]["incident_id"] == "inc-a" and rows[0]["status"] == "Open"
+    assert rows[0]["url"].endswith("/opsitems/oi-aaaaaaaaaaaa?region=us-east-1")
+    assert rows[1]["created_at"].startswith("2026-01-02")
+    assert rows[1]["source"] == "opscenter"
+
+
 def test_create_ticket_maps_severity_priority_and_operational_data(rca):
     ssm = FakeSSM()
     ticket = ticketing.create_ticket(rca, incident={"service": "orders", "alarm_name": "A1"}, ssm_client=ssm)

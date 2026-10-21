@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle, CopyX, GitPullRequest, HelpCircle, ShieldAlert, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, CheckCircle, CopyX, GitPullRequest, HelpCircle, ShieldAlert, Ticket, type LucideIcon } from 'lucide-react';
 import { Classification, IncidentStatus } from '../types';
 
 const NEUTRAL = 'bg-transparent text-ink-300 border-ink-700';
@@ -44,7 +44,12 @@ export function statusBadge(status: IncidentStatus): StatusBadge {
     case 'VERIFIED':
       return { label: 'Verified fix', className: 'bg-ok-500/10 text-ok-300 border-ok-500/30', text: 'text-ok-300', icon: CheckCircle };
     case 'PROPOSED':
-      return { label: 'PR proposed', className: 'bg-signal-500/10 text-signal-200 border-signal-500/30', text: 'text-signal-300', icon: GitPullRequest };
+    case 'PR_OPENED':
+      return { label: 'PR opened', className: 'bg-signal-500/10 text-signal-200 border-signal-500/30', text: 'text-signal-300', icon: GitPullRequest };
+    case 'AWAITING_CHOICE':
+      return { label: 'Choose a fix', className: 'bg-signal-500/10 text-signal-200 border-signal-500/30', text: 'text-signal-300', icon: GitPullRequest };
+    case 'APPLY_MYSELF':
+      return { label: 'Applying manually', className: NEUTRAL, text: 'text-ink-200', icon: ShieldAlert };
     case 'NEEDS_HUMAN':
       return { label: 'Needs human', className: 'bg-amber-500/10 text-amber-200 border-amber-400/30', text: 'text-amber-300', icon: AlertTriangle };
     case 'NOTIFIED':
@@ -53,6 +58,27 @@ export function statusBadge(status: IncidentStatus): StatusBadge {
       return { label: 'Duplicate skipped', className: NEUTRAL, text: 'text-ink-300', icon: CopyX };
     default:
       return { label: status || 'Unknown', className: NEUTRAL, text: 'text-ink-300', icon: HelpCircle };
+  }
+}
+
+export function opsSeverity(sev?: string | null): 'sev1' | 'sev2' | 'sev3' | 'sev4' | null {
+  if (sev === 'sev1' || sev === '1') return 'sev1';
+  if (sev === 'sev2' || sev === '2') return 'sev2';
+  if (sev === 'sev3' || sev === '3') return 'sev3';
+  if (sev === 'sev4' || sev === '4') return 'sev4';
+  return null;
+}
+
+export function ticketStatusBadge(status: string): StatusBadge {
+  switch (status) {
+    case 'Open':
+      return { label: 'Open', className: 'bg-signal-500/10 text-signal-200 border-signal-500/30', text: 'text-signal-300', icon: Ticket };
+    case 'InProgress':
+      return { label: 'In progress', className: 'bg-amber-500/10 text-amber-200 border-amber-400/30', text: 'text-amber-300', icon: AlertTriangle };
+    case 'Resolved':
+      return { label: 'Resolved', className: 'bg-ok-500/10 text-ok-300 border-ok-500/30', text: 'text-ok-300', icon: CheckCircle };
+    default:
+      return statusBadge(status);
   }
 }
 

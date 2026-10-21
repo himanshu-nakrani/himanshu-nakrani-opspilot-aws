@@ -1,13 +1,49 @@
 """Unit tests for patch agent, PR creation, and needs-human marking."""
 
 import os
+import shutil
+import subprocess
+import sys
 
 import pytest
 from opspilot.contracts import EvidenceItem, RcaResult, SuspectedLocation, TicketRef
-from opspilot.fix.agent import UnsupportedFixTarget, generate_repro_test_and_patch, mark_needs_human_handler, propose_fix
+from opspilot.fix.agent import UnsupportedFixTarget, generate_repro_test_and_patch, mark_needs_human_handler, propose_fix, suggested_diff
 from opspilot.fix.git_ops import GitHubError, PatchApplyError, apply_unified_diff
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _assert_patched_create_order_returns_422(patch: str) -> None:
+    """Apply the diff to a copy of sample_service and execute the repro behavior."""
+    import tempfile
+
+    from opspilot.fix.git_ops import apply_unified_diff as apply_diff
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pkg = os.path.join(tmp, "sample_service")
+        shutil.copytree(os.path.join(REPO_ROOT, "sample_service"), pkg, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        original = open(os.path.join(pkg, "app.py"), encoding="utf-8").read()
+        patched = apply_diff(original, patch, "sample_service/app.py")
+        with open(os.path.join(pkg, "app.py"), "w", encoding="utf-8") as handle:
+            handle.write(patched)
+        script = os.path.join(tmp, "check_create_order.py")
+        with open(script, "w", encoding="utf-8") as handle:
+            handle.write(
+                "from fastapi.testclient import TestClient\n"
+                "from sample_service.app import app\n"
+                "client = TestClient(app, raise_server_exceptions=False)\n"
+                "missing = client.post('/orders', json={})\n"
+                "assert missing.status_code == 422, (missing.status_code, missing.text)\n"
+                "assert missing.json() == {'detail': 'customer_id is required'}\n"
+                "ok = client.post('/orders', json={'customer_id': 'c-1'})\n"
+                "assert ok.status_code == 200, ok.text\n"
+                "assert ok.json()['customer_id'] == 'c-1'\n"
+            )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = tmp + os.pathsep + env.get("PYTHONPATH", "")
+        env["FAULT_DB_TIMEOUT_S"] = "0"
+        proc = subprocess.run([sys.executable, script], cwd=tmp, env=env, capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 @pytest.fixture
@@ -29,6 +65,14 @@ def sample_inputs():
     return rca, ticket
 
 
+def test_suggested_diff_does_not_touch_the_repo(sample_inputs):
+    rca, _ticket = sample_inputs
+    diff = suggested_diff(rca)
+    assert diff and "HTTPException" in diff
+    refused = rca.model_copy(update={"classification": "dependency"})
+    assert suggested_diff(refused) is None
+
+
 def test_generate_repro_test_and_patch(sample_inputs):
     rca, ticket = sample_inputs
     repro_code, test_path, patch = generate_repro_test_and_patch(rca, ticket)
@@ -38,6 +82,43 @@ def test_generate_repro_test_and_patch(sample_inputs):
     assert 'assert response.status_code == 404' in repro_code
     assert "HTTPException" in patch
     assert "status_code=404" in patch
+    assert "def get_order" in patch
+
+
+def _create_order_rca(sample_inputs):
+    rca, ticket = sample_inputs
+    return rca.model_copy(
+        update={
+            "summary": "Unhandled KeyError 'customer_id' in create_order()",
+            "suspected_location": SuspectedLocation(file="sample_service/app.py", line=28, function="create_order"),
+            "suggested_fix_strategy": "Validate the request body and return 422 when customer_id is missing.",
+        }
+    ), ticket
+
+
+def test_create_order_patch_validates_customer_id_and_applies(sample_inputs):
+    rca, ticket = _create_order_rca(sample_inputs)
+    diff = suggested_diff(rca)
+    assert diff and 'customer_id is required' in diff and "status_code=422" in diff
+    assert "def get_order" not in diff
+
+    repro_code, test_path, patch = generate_repro_test_and_patch(rca, ticket)
+    assert "test_missing_customer_id_returns_422" in repro_code
+    assert 'assert response.status_code == 422' in repro_code
+    assert test_path.endswith("test_opspilot_oi_0a1b2c3d4e5f.py")
+
+    gh = FakeGitHub()
+    pr_ref = propose_fix(rca, ticket, github=gh)
+    _branch, _base, files = gh.commits[0]
+    assert set(files) == {"sample_service/app.py", pr_ref.repro_test_path}
+    patched = files["sample_service/app.py"]
+    assert 'customer_id = payload.get("customer_id")' in patched
+    assert 'HTTPException(status_code=422, detail="customer_id is required")' in patched
+    assert "if order is None:" not in patched
+    assert "customer_id is required" in files[pr_ref.repro_test_path]
+    # The same diff must apply to the file the fake client read, and the result must 422.
+    apply_unified_diff(gh.files["sample_service/app.py"], patch, "sample_service/app.py")
+    _assert_patched_create_order_returns_422(patch)
 
 
 class FakeGitHub:
@@ -89,6 +170,12 @@ def test_propose_fix_refuses_unsupported_target(sample_inputs):
     other = rca.model_copy(update={"suspected_location": SuspectedLocation(file="billing/service.py", line=3, function="x")})
     with pytest.raises(UnsupportedFixTarget):
         propose_fix(other, ticket, github=FakeGitHub())
+    checkout = rca.model_copy(
+        update={"suspected_location": SuspectedLocation(file="sample_service/faults.py", line=177, function="checkout")}
+    )
+    with pytest.raises(UnsupportedFixTarget):
+        propose_fix(checkout, ticket, github=FakeGitHub())
+    assert suggested_diff(checkout) is None
 
 
 def test_patch_that_does_not_match_base_is_rejected():

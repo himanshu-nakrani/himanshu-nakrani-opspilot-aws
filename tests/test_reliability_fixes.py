@@ -60,9 +60,8 @@ def test_asl_rca_failure_abstains_and_never_proposes_fix():
     RcaResult(incident_id="x", classification="insufficient_evidence", severity="sev3", confidence=0.0,
               summary="s", evidence=[EvidenceItem(**abstain["evidence"][0])],
               suggested_fix_strategy=abstain["suggested_fix_strategy"])
-    # Route only goes to ProposeFix when no upstream error was recorded.
-    for choice in STATES["Route"]["Choices"]:
-        assert {"Variable": "$.error", "IsPresent": False} in choice["And"]
+    # An abstention still cannot open a pull request: Route never enters ProposeFix.
+    assert all(choice["Next"] != "ProposeFix" for choice in STATES["Route"]["Choices"])
 
 
 def test_asl_verify_goes_through_parse_verification():
@@ -140,19 +139,20 @@ def test_opscenter_create_failure_raises_instead_of_fake_ticket():
         ticketing.create_ticket(rca, ssm_client=BrokenSSM())
 
 
-def test_asl_route_matches_python_router():
-    """The deployed Route Choice must send exactly what determine_route sends to propose_fix."""
+def test_asl_route_waits_for_a_human_pr_choice():
+    """The pipeline records the analysis and notifies. It does not open a pull request.
+
+    Whether a diff is offerable stays in route_rca. The incident screen raises the PR.
+    """
     from opspilot.route import FIXABLE_CLASSES, determine_route
 
-    to_fix = [c for c in STATES["Route"]["Choices"] if c["Next"] == "ProposeFix"]
-    asl_classes = {
-        cond["StringEquals"]
-        for c in to_fix for cond in c["And"] if cond.get("Variable") == "$.rca.classification"
-    }
-    assert asl_classes == set(FIXABLE_CLASSES)
-    for c in to_fix:
-        assert {"Variable": "$.rca.confidence", "NumericGreaterThanEquals": 0.6} in c["And"]
+    assert ASL["StartAt"] == "Entry"
+    assert STATES["Entry"]["Default"] == "CollectContext"
+    assert STATES["Entry"]["Choices"] == [
+        {"Variable": "$.action", "StringEquals": "raise_pr", "Next": "ProposeFix"}
+    ]
     assert STATES["Route"]["Default"] == "Notify"
-    for cls in ("code_defect", "config_regression", "dependency", "resource", "insufficient_evidence"):
-        expected = "propose_fix" if cls in asl_classes else "notify"
-        assert determine_route(cls, 0.95) == expected
+    assert all(c["Next"] != "ProposeFix" for c in STATES["Route"]["Choices"])
+    assert "ProposeFix" in STATES
+    assert determine_route("code_defect", 0.95) == "propose_fix"
+    assert "code_defect" in FIXABLE_CLASSES

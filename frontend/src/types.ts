@@ -10,6 +10,9 @@ export type Classification =
 export type IncidentStatus =
   | 'VERIFIED'
   | 'PROPOSED'
+  | 'PR_OPENED'
+  | 'AWAITING_CHOICE'
+  | 'APPLY_MYSELF'
   | 'NEEDS_HUMAN'
   | 'NOTIFIED'
   | 'DUPLICATE_SKIPPED'
@@ -51,6 +54,8 @@ export interface Incident {
   pr_branch?: string | null;
   pr_url?: string | null;
   patch_diff?: string | null;
+  /** true when Raise PR can open a pull request for this diff */
+  can_raise_pr?: boolean;
   source?: IncidentSource;
   /** set when the dashboard ran the RCA agent itself and kept its trace */
   agent_run_id?: string | null;
@@ -167,6 +172,33 @@ export interface Scenario {
   /** true when the scenario sends real requests to sample_service */
   live_probe: boolean;
   expected_outcome: IncidentStatus;
+}
+
+export type TicketView = 'open' | 'in_progress' | 'resolved' | 'all';
+
+export type TicketSource = 'opscenter' | 'dashboard';
+
+export interface Ticket {
+  key: string;
+  title: string;
+  status: string;
+  severity?: string | null;
+  priority?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  incident_id?: string | null;
+  url?: string | null;
+  source: TicketSource;
+  classification?: Classification | null;
+  category?: string | null;
+}
+
+export interface TicketList {
+  view: TicketView;
+  opscenter_error?: string | null;
+  counts: Record<TicketView, number>;
+  tickets: Ticket[];
+  recorded: Ticket[];
 }
 
 export interface TriggerResponse {

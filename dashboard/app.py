@@ -8,7 +8,7 @@ Provides real-time visualization of:
 - Live trigger simulation and M6 evaluation benchmark results
 """
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 import glob
 import hashlib
@@ -18,7 +18,7 @@ import os
 import time
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 import boto3
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,12 +27,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-from opspilot.contracts import ContextBundle, RcaResult
+from opspilot.contracts import ContextBundle, RcaResult, TicketRef
+from opspilot.fix.agent import propose_fix, suggested_diff
+from opspilot.fix.guardrails import PatchRejectedException
 from opspilot.ingest import handle_alarm_event
 from opspilot.rca.agent import run_rca_agent
 from opspilot.agentcore.runtime import AgentCoreRuntime
 from dashboard.runs import build_agent_run, summarize as summarize_run
 from opspilot.route import route_rca
+from opspilot.ticketing import list_opscenter_tickets
 from sample_service.app import app as sample_app
 from dashboard.scenarios import (
     DEFAULT_SCENARIO,
@@ -48,8 +51,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_PATH = Path(__file__).resolve().parent / "templates" / "index.html"
 FRONTEND_DIST_PATH = REPO_ROOT / "frontend" / "dist"
 
+# Fix pull requests land in the storefront repo CodePipeline deploys, not the platform repo.
+STOREFRONT_REPO = "opspilot-sample-service"
+CLOSED_FIX_CHOICES = {"APPLY_MYSELF", "PR_OPENED", "VERIFIED"}
+
 # Local in-memory incident cache for demo & offline mode
 LOCAL_INCIDENTS_CACHE: List[Dict[str, Any]] = []
+# Choices made in this dashboard process, merged onto both cache and DynamoDB rows.
+FIX_CHOICES: Dict[str, Dict[str, Any]] = {}
 # Agent runs captured while the dashboard ran the RCA agent, keyed by run (session) id.
 AGENT_RUNS: Dict[str, Dict[str, Any]] = {}
 
@@ -70,6 +79,56 @@ def _run_rca_with_trace(bundle: ContextBundle):
         return run_rca_agent(bundle), None
 # Cap the demo cache so repeated simulations cannot grow memory without bound
 LOCAL_INCIDENTS_CACHE_MAX = 200
+
+
+def _rca_for_offer(inc: Dict[str, Any]) -> Optional[RcaResult]:
+    """Build an RCA from a dashboard row so the fix agent can accept or refuse it."""
+    if not inc.get("classification"):
+        return None
+    try:
+        return RcaResult.model_validate(
+            {
+                "incident_id": inc.get("incident_id") or "unknown",
+                "classification": inc.get("classification"),
+                "severity": inc.get("severity") or "sev3",
+                "confidence": inc.get("confidence") if inc.get("confidence") is not None else 0,
+                "summary": (inc.get("summary") or "Suggested fix")[:600],
+                "suspected_location": inc.get("suspected_location"),
+                "evidence": inc.get("evidence") or [],
+                "suggested_fix_strategy": inc.get("suggested_fix_strategy") or "Apply the suggested diff.",
+            }
+        )
+    except Exception:
+        return None
+
+
+def apply_fix_offer(item: Dict[str, Any]) -> None:
+    """Show the generator's diff when one exists. Raise PR only in that case.
+
+    An authored diff with no generator stays visible so the operator can apply it
+    themselves. The Raise PR button is not offered for that row.
+    """
+    rca = _rca_for_offer(item)
+    generated = suggested_diff(rca) if rca is not None else None
+    if generated and (item.get("patch_diff") or item.get("status") == "AWAITING_CHOICE"):
+        item["patch_diff"] = generated
+    choice_closed = bool(item.get("pr_url")) or item.get("status") in CLOSED_FIX_CHOICES
+    item["can_raise_pr"] = bool(generated) and bool(item.get("patch_diff")) and not choice_closed
+
+
+@contextmanager
+def _storefront_repo_env():
+    """Point propose_fix at the storefront repo for this call, then restore the process env."""
+    key = "CODECOMMIT_REPO"
+    previous = os.environ.get(key)
+    os.environ[key] = os.environ.get("APP_CODECOMMIT_REPO", STOREFRONT_REPO)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = previous
 
 
 def stable_ticket_number(seed: str, modulo: int = 900, offset: int = 100) -> int:
@@ -104,25 +163,17 @@ def seed_cache_from_fixtures():
                 run_id = run["run_id"]
                 AGENT_RUNS[run_id] = run
 
-            has_pr = route == "propose_fix"
+            awaiting = route == "propose_fix"
             ticket_key = f"OPS-{stable_ticket_number(inc_id)}"
-            pr_branch = f"opspilot/{ticket_key}" if has_pr else None
 
-            sample_patch = """--- a/sample_service/app.py
-+++ b/sample_service/app.py
-@@ -28,3 +29,5 @@
- def get_order(order_id: str):
-     order: Optional[Order] = ORDERS.get(order_id)
-+    if order is None:
-+        raise HTTPException(status_code=404, detail="Order not found")
-""" if has_pr else None
+            sample_patch = suggested_diff(rca_mock) if awaiting else None
 
             LOCAL_INCIDENTS_CACHE.append({
                 "incident_id": inc_id,
                 "service": bundle.get("service", "sample-service"),
                 "alarm_name": "OpsPilotSampleServiceErrors",
                 "detected_at": bundle.get("detected_at", datetime.now(timezone.utc).isoformat()),
-                "status": "VERIFIED" if has_pr else "NOTIFIED",
+                "status": "AWAITING_CHOICE" if awaiting else "NOTIFIED",
                 "classification": rca_mock.classification,
                 "confidence": rca_mock.confidence,
                 "severity": rca_mock.severity,
@@ -132,9 +183,10 @@ def seed_cache_from_fixtures():
                 "ticket_key": ticket_key,
                 # Fixture replays never created a real ticket or PR, so no links are emitted.
                 "ticket_url": None,
-                "pr_branch": pr_branch,
+                "pr_branch": None,
                 "pr_url": None,
                 "patch_diff": sample_patch,
+                "can_raise_pr": bool(sample_patch),
                 "suggested_fix_strategy": rca_mock.suggested_fix_strategy,
                 "source": "fixture",
                 "agent_run_id": run_id,
@@ -175,6 +227,7 @@ dashboard_app.mount(
 
 
 @dashboard_app.get("/", response_class=HTMLResponse)
+@dashboard_app.get("/tickets", response_class=HTMLResponse)
 def get_dashboard_html():
     """Serve the SRE dashboard single page interface (React SPA with template fallback)."""
     dist_index = FRONTEND_DIST_PATH / "index.html"
@@ -213,6 +266,7 @@ def list_incidents() -> List[Dict[str, Any]]:
                     "ticket_url": raw.get("ticket_url", {}).get("S"),
                     "pr_branch": raw.get("pr_branch", {}).get("S"),
                     "pr_url": raw.get("pr_url", {}).get("S"),
+                    "patch_diff": raw.get("patch_diff", {}).get("S"),
                 }
                 if "rca_result" in raw:
                     try:
@@ -231,6 +285,11 @@ def list_incidents() -> List[Dict[str, Any]]:
         if local["incident_id"] not in seen_ids:
             items.append(local)
 
+    for item in items:
+        chosen = FIX_CHOICES.get(item.get("incident_id") or "")
+        if chosen:
+            item.update(chosen)
+        apply_fix_offer(item)
     return sorted(items, key=lambda x: str(x.get("detected_at", "")), reverse=True)
 
 
@@ -242,6 +301,152 @@ def get_incident(incident_id: str) -> Dict[str, Any]:
         if inc.get("incident_id") == incident_id:
             return inc
     raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+
+_TICKET_VIEWS = {"open", "in_progress", "resolved", "all"}
+_OPEN_TICKET_STATUSES = {"Open", "InProgress"}
+
+
+def _recorded_tickets() -> List[Dict[str, Any]]:
+    """Ticket labels already stored on dashboard incidents. These are not OpsCenter rows."""
+    rows = []
+    for inc in list_incidents():
+        key = inc.get("ticket_key")
+        if not key:
+            continue
+        rows.append(
+            {
+                "key": key,
+                "title": inc.get("summary") or inc.get("incident_id"),
+                "status": inc.get("status") or "RECORDED",
+                "severity": inc.get("severity"),
+                "priority": None,
+                "created_at": inc.get("detected_at"),
+                "updated_at": None,
+                "incident_id": inc.get("incident_id"),
+                "url": inc.get("ticket_url"),
+                "source": "dashboard",
+                "classification": inc.get("classification"),
+                "category": None,
+            }
+        )
+    return rows
+
+
+@dashboard_app.get("/api/tickets")
+def get_tickets(view: str = "open") -> Dict[str, Any]:
+    """Open OpsCenter OpsItems, plus ticket labels recorded only on incidents."""
+    if view not in _TICKET_VIEWS:
+        raise HTTPException(status_code=400, detail=f"view must be one of {sorted(_TICKET_VIEWS)}")
+    opscenter_error = None
+    try:
+        opscenter = list_opscenter_tickets()
+    except Exception as e:  # noqa: BLE001 - the page still shows tickets recorded on incidents
+        logger.info("OpsCenter ticket list unavailable: %s", e)
+        opscenter = []
+        opscenter_error = str(e)
+
+    if view == "open":
+        shown = [row for row in opscenter if row.get("status") in _OPEN_TICKET_STATUSES]
+    elif view == "in_progress":
+        shown = [row for row in opscenter if row.get("status") == "InProgress"]
+    elif view == "resolved":
+        shown = [row for row in opscenter if row.get("status") == "Resolved"]
+    else:
+        shown = opscenter
+
+    filed = {row["key"] for row in opscenter}
+    recorded = [row for row in _recorded_tickets() if row["key"] not in filed]
+    counts = {
+        "open": sum(1 for row in opscenter if row.get("status") in _OPEN_TICKET_STATUSES),
+        "in_progress": sum(1 for row in opscenter if row.get("status") == "InProgress"),
+        "resolved": sum(1 for row in opscenter if row.get("status") == "Resolved"),
+        "all": len(opscenter),
+    }
+    return {
+        "view": view,
+        "opscenter_error": opscenter_error,
+        "counts": counts,
+        "tickets": shown,
+        "recorded": recorded,
+    }
+
+
+class FixChoiceBody(BaseModel):
+    action: Literal["apply_myself", "raise_pr"]
+
+
+def _record_choice(incident_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Remember a human fix choice for this dashboard session and, when live, the incident row."""
+    FIX_CHOICES[incident_id] = {**FIX_CHOICES.get(incident_id, {}), **fields}
+    for cached in LOCAL_INCIDENTS_CACHE:
+        if cached.get("incident_id") == incident_id:
+            cached.update(fields)
+    stored = {
+        key: str(value)
+        for key, value in fields.items()
+        if key in {"status", "pr_branch", "pr_url", "patch_diff"} and value
+    }
+    if stored:
+        try:
+            from opspilot.audit import update_incident
+
+            update_incident(incident_id, stored)
+        except Exception as e:  # noqa: BLE001
+            logger.info("Fix choice for %s stayed in the dashboard session: %s", incident_id, e)
+    return get_incident(incident_id)
+
+
+@dashboard_app.post("/api/incidents/{incident_id}/fix-choice")
+def choose_fix(incident_id: str, body: FixChoiceBody) -> Dict[str, Any]:
+    """Record "I'll apply this myself" or open the CodeCommit pull request for the suggested diff."""
+    inc = get_incident(incident_id)
+    if inc.get("pr_url") or inc.get("status") in {"APPLY_MYSELF", "PR_OPENED", "VERIFIED"}:
+        raise HTTPException(status_code=409, detail="A choice was already recorded for this incident.")
+    if not inc.get("patch_diff"):
+        raise HTTPException(status_code=400, detail="This incident has no suggested change.")
+    if body.action == "apply_myself":
+        return _record_choice(incident_id, {"status": "APPLY_MYSELF"})
+    if not inc.get("can_raise_pr"):
+        raise HTTPException(
+            status_code=400,
+            detail="This change has no pull-request generator. Apply it yourself.",
+        )
+
+    try:
+        rca = RcaResult.model_validate(
+            {
+                "incident_id": incident_id,
+                "classification": inc.get("classification"),
+                "severity": inc.get("severity") or "sev3",
+                "confidence": inc.get("confidence") if inc.get("confidence") is not None else 0,
+                "summary": (inc.get("summary") or "Suggested fix")[:600],
+                "suspected_location": inc.get("suspected_location"),
+                "evidence": inc.get("evidence") or [],
+                "suggested_fix_strategy": inc.get("suggested_fix_strategy") or "Apply the suggested diff.",
+            }
+        )
+        ticket = TicketRef(
+            key=inc.get("ticket_key") or f"OPS-{incident_id[-8:]}",
+            url=inc.get("ticket_url") or "",
+            incident_id=incident_id,
+        )
+        with _storefront_repo_env():
+            pr = propose_fix(rca, ticket)
+    except PatchRejectedException as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Raise PR failed for %s: %s", incident_id, e)
+        raise HTTPException(status_code=502, detail=f"Could not open the pull request: {e}") from e
+    return _record_choice(
+        incident_id,
+        {
+            "status": "PR_OPENED",
+            "pr_branch": pr.branch,
+            "pr_url": pr.pr_url,
+            "patch_diff": inc.get("patch_diff"),
+        },
+    )
 
 
 AGENTCORE_POLICIES = ["blast_radius_files", "blast_radius_lines", "protected_paths", "evidence_grounding", "abstention_policy"]
@@ -342,7 +547,7 @@ def trigger_incident_simulation(body: Optional[TriggerRequest] = None) -> Dict[s
     ingest_status = res.get("status", "unknown")
     duplicate = ingest_status != "started"
     outcome = expected_status(sc)
-    proposes_fix = outcome == "PROPOSED" and not duplicate
+    awaiting = outcome == "AWAITING_CHOICE" and not duplicate
     ticket_key = f"OPS-{stable_ticket_number(inc_id)}"
 
     new_inc = {
@@ -359,13 +564,15 @@ def trigger_incident_simulation(body: Optional[TriggerRequest] = None) -> Dict[s
         "evidence": sc["evidence"],
         "ticket_key": None if duplicate else ticket_key,
         "ticket_url": None,
-        "pr_branch": f"opspilot/{ticket_key}" if proposes_fix else None,
+        "pr_branch": None,
         "pr_url": None,
-        "patch_diff": sc.get("patch_diff") if proposes_fix else None,
+        "patch_diff": sc.get("patch_diff") if awaiting else None,
+        "can_raise_pr": False,
         "suggested_fix_strategy": sc.get("suggested_fix_strategy"),
         "source": "simulated",
         "scenario": scenario_id,
     }
+    apply_fix_offer(new_inc)
     LOCAL_INCIDENTS_CACHE.insert(0, new_inc)
     del LOCAL_INCIDENTS_CACHE[LOCAL_INCIDENTS_CACHE_MAX:]
 

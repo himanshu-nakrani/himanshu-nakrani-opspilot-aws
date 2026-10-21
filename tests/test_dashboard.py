@@ -1,5 +1,7 @@
 """Unit tests for the FastAPI SRE Dashboard."""
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 from dashboard.app import dashboard_app, seed_cache_from_fixtures
@@ -10,6 +12,54 @@ client = TestClient(dashboard_app)
 @pytest.fixture(autouse=True)
 def setup_dashboard():
     seed_cache_from_fixtures()
+
+
+def test_tickets_page_lists_open_opscenter_items(monkeypatch):
+    import dashboard.app as app_mod
+
+    monkeypatch.setattr(
+        app_mod,
+        "list_opscenter_tickets",
+        lambda: [
+            {
+                "key": "oi-open",
+                "title": "missing order",
+                "status": "Open",
+                "severity": "2",
+                "priority": 2,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": None,
+                "incident_id": "inc-open",
+                "url": "https://example/oi-open",
+                "source": "opscenter",
+                "category": "Availability",
+            },
+            {
+                "key": "oi-done",
+                "title": "resolved",
+                "status": "Resolved",
+                "severity": "4",
+                "priority": 4,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": None,
+                "incident_id": "inc-done",
+                "url": "https://example/oi-done",
+                "source": "opscenter",
+                "category": "Availability",
+            },
+        ],
+    )
+    with TestClient(dashboard_app) as c:
+        page = c.get("/tickets")
+        assert page.status_code == 200 and "OpsPilot" in page.text
+        open_rows = c.get("/api/tickets").json()
+        assert open_rows["view"] == "open"
+        assert [row["key"] for row in open_rows["tickets"]] == ["oi-open"]
+        assert open_rows["counts"]["all"] == 2 and open_rows["counts"]["open"] == 1
+        assert open_rows["recorded"]
+        assert all(row["source"] == "dashboard" for row in open_rows["recorded"])
+        assert c.get("/api/tickets?view=all").json()["tickets"][1]["key"] == "oi-done"
+        assert c.get("/api/tickets?view=nope").status_code == 400
 
 
 def test_dashboard_home_html():
@@ -56,7 +106,10 @@ def test_get_stats_api():
     stats = response.json()
     assert stats["total_incidents"] >= 10
     assert 0.0 <= stats["mean_confidence"] <= 1.0
-    assert stats["total_prs_opened"] >= 1
+    # Seeded incidents offer a diff and wait. A pull request counts only after Raise PR.
+    assert stats["total_prs_opened"] == 0
+    awaiting = [i for i in client.get("/api/incidents").json() if i.get("status") == "AWAITING_CHOICE"]
+    assert awaiting and all(i.get("patch_diff") and not i.get("pr_url") for i in awaiting)
 
 
 def test_trigger_simulation_api():
@@ -164,10 +217,16 @@ def _scenario_rca(sid, sc):
     )
 
 
-def test_every_scenario_simulates_and_matches_router():
+def test_every_scenario_simulates_and_matches_router(monkeypatch):
     """Every scenario's dashboard outcome must equal opspilot.route.route_rca, both ways."""
+    import dashboard.app as app_mod
     from dashboard.scenarios import SCENARIOS
     from opspilot.route import route_rca
+
+    def started(event):
+        return {"status": "started", "incident_id": f"inc-route-{event['detail']['alarmName']}"}
+
+    monkeypatch.setattr(app_mod, "handle_alarm_event", started)
     with TestClient(dashboard_app) as c:
         for sid, sc in SCENARIOS.items():
             data = c.post("/api/trigger", json={"scenario": sid}).json()
@@ -176,8 +235,9 @@ def test_every_scenario_simulates_and_matches_router():
             assert inc["status"] != "DUPLICATE_SKIPPED", sid
             route = route_rca(_scenario_rca(sid, sc))
             if route == "propose_fix":
-                assert inc["status"] == "PROPOSED", sid
-                assert inc["patch_diff"] and inc["pr_branch"], sid
+                assert inc["status"] == "AWAITING_CHOICE", sid
+                assert inc["patch_diff"], sid
+                assert inc["pr_branch"] is None, sid
             else:
                 assert inc["status"] == "NOTIFIED", sid
                 assert inc["patch_diff"] is None and inc["pr_branch"] is None, sid
@@ -234,14 +294,135 @@ def test_different_scenarios_do_not_dedupe_but_repeats_do(monkeypatch):
         first = c.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
         other = c.post("/api/trigger", json={"scenario": "config_env"}).json()["incident"]
         again = c.post("/api/trigger", json={"scenario": "config_env"}).json()["incident"]
-    assert first["status"] == "PROPOSED"
+    assert first["status"] == "AWAITING_CHOICE"
     assert other["status"] == "NOTIFIED"
     assert again["status"] == "DUPLICATE_SKIPPED"
+
+
+def test_fixture_diffs_match_the_suspected_function():
+    """Seeded create_order incidents must not be offered the planted get_order patch."""
+    with TestClient(dashboard_app) as c:
+        incidents = {i["incident_id"]: i for i in c.get("/api/incidents").json()}
+    created = incidents["inc-eval-09"]
+    assert created["status"] == "AWAITING_CHOICE"
+    assert created["suspected_location"]["function"] == "create_order"
+    assert created["can_raise_pr"] is True
+    assert "customer_id is required" in created["patch_diff"]
+    assert "def get_order" not in created["patch_diff"]
+    orders = incidents["inc-eval-01"]
+    assert orders["suspected_location"]["function"] == "get_order"
+    assert "status_code=404" in orders["patch_diff"]
+    assert orders["can_raise_pr"] is True
+
+
+def test_authored_diff_without_a_generator_hides_raise_pr():
+    from dashboard.app import LOCAL_INCIDENTS_CACHE
+
+    inc_id = "inc-no-generator"
+    LOCAL_INCIDENTS_CACHE.insert(0, {
+        "incident_id": inc_id,
+        "service": "sample-service",
+        "detected_at": "2026-10-21T00:00:00+00:00",
+        "status": "AWAITING_CHOICE",
+        "classification": "code_defect",
+        "confidence": 0.9,
+        "severity": "sev2",
+        "summary": "Unknown coupon is indexed without a check.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 177, "function": "checkout"},
+        "evidence": [{"kind": "stack_frame", "ref": "sample_service/faults.py:177", "claim": "COUPONS[coupon]"}],
+        "suggested_fix_strategy": "Return 400 for an unknown coupon.",
+        "patch_diff": "--- a/sample_service/faults.py\n+++ b/sample_service/faults.py\n@@ -1 +1 @@\n-old\n+new\n",
+        "pr_url": None,
+        "source": "fixture",
+    })
+    with TestClient(dashboard_app) as c:
+        body = c.get(f"/api/incidents/{inc_id}").json()
+        assert "faults.py" in body["patch_diff"]
+        assert body["can_raise_pr"] is False
+        refused = c.post(f"/api/incidents/{inc_id}/fix-choice", json={"action": "raise_pr"})
+        assert refused.status_code == 400
+        assert "No fix generator" not in refused.text
+        applied = c.post(f"/api/incidents/{inc_id}/fix-choice", json={"action": "apply_myself"})
+        assert applied.status_code == 200
+        assert applied.json()["status"] == "APPLY_MYSELF"
+        assert applied.json()["can_raise_pr"] is False
 
 
 def test_unknown_scenario_is_rejected():
     with TestClient(dashboard_app) as c:
         assert c.post("/api/trigger", json={"scenario": "nope"}).status_code == 400
+
+
+def test_fix_choice_apply_myself_or_raise_pr(monkeypatch):
+    """The incident offers the diff first. Apply-myself opens nothing. Raise PR opens one."""
+    import dashboard.app as app_mod
+    from opspilot.contracts import PrRef
+
+    seq = {"n": 0}
+
+    def fake_ingest(_event):
+        seq["n"] += 1
+        return {"status": "started", "incident_id": f"inc-choice-{seq['n']}"}
+
+    def fake_propose(rca, ticket, **kwargs):
+        assert os.environ.get("CODECOMMIT_REPO") == "opspilot-sample-service"
+        assert rca.suspected_location.function == "get_order"
+        return PrRef(
+            branch=f"opspilot/{ticket.key}",
+            base="main",
+            repro_test_path="sample_service/tests/test_get_order_repro.py",
+            pr_url="https://codecommit.example/pr/9",
+            pr_number=9,
+        )
+
+    monkeypatch.setattr(app_mod, "handle_alarm_event", fake_ingest)
+    monkeypatch.setattr(app_mod, "propose_fix", fake_propose)
+    with TestClient(dashboard_app) as c:
+        first = c.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
+        assert first["status"] == "AWAITING_CHOICE" and first["pr_url"] is None and first["patch_diff"]
+
+        manual = c.post(f"/api/incidents/{first['incident_id']}/fix-choice", json={"action": "apply_myself"})
+        assert manual.status_code == 200
+        assert manual.json()["status"] == "APPLY_MYSELF"
+        assert manual.json()["pr_url"] is None
+        assert c.post(f"/api/incidents/{first['incident_id']}/fix-choice", json={"action": "raise_pr"}).status_code == 409
+
+        second = c.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
+        assert "status_code=404" in second["patch_diff"] and second["can_raise_pr"] is True
+        raised = c.post(f"/api/incidents/{second['incident_id']}/fix-choice", json={"action": "raise_pr"})
+        assert raised.status_code == 200, raised.text
+        opened = raised.json()
+        assert opened["status"] == "PR_OPENED"
+        assert opened["pr_url"] == "https://codecommit.example/pr/9"
+        assert opened["pr_branch"].startswith("opspilot/")
+        assert opened["patch_diff"]
+
+        missing = c.post("/api/trigger", json={"scenario": "missing_field"}).json()["incident"]
+        assert missing["suspected_location"]["function"] == "create_order"
+        assert "customer_id is required" in missing["patch_diff"]
+        assert "status_code=422" in missing["patch_diff"]
+        assert "def get_order" not in missing["patch_diff"]
+        assert missing["can_raise_pr"] is True
+
+        def fake_propose_create(rca, ticket, **kwargs):
+            assert rca.suspected_location.function == "create_order"
+            return PrRef(
+                branch=f"opspilot/{ticket.key}",
+                base="main",
+                repro_test_path="sample_service/tests/test_create_order_repro.py",
+                pr_url="https://codecommit.example/pr/10",
+                pr_number=10,
+            )
+
+        monkeypatch.setattr(app_mod, "propose_fix", fake_propose_create)
+        created = c.post(f"/api/incidents/{missing['incident_id']}/fix-choice", json={"action": "raise_pr"})
+        assert created.status_code == 200, created.text
+        assert created.json()["pr_url"] == "https://codecommit.example/pr/10"
+        assert "customer_id is required" in created.json()["patch_diff"]
+
+        notified = c.post("/api/trigger", json={"scenario": "config_env"}).json()["incident"]
+        assert notified["can_raise_pr"] is False
+        assert c.post(f"/api/incidents/{notified['incident_id']}/fix-choice", json={"action": "raise_pr"}).status_code == 400
 
 
 # --- Agent runs and traces ---
