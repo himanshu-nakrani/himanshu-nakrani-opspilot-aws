@@ -60,3 +60,21 @@ def test_collect_context_bundle_with_sample_bug():
     assert bundle.stack_trace.error_type == "AttributeError"
     assert "sample_service/app.py" in bundle.repo_files
     assert "ORDERS" in bundle.repo_files["sample_service/app.py"]
+
+
+def test_fetch_logs_prefers_error_events_then_falls_back():
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock
+
+    from opspilot.collect_context import ERROR_FILTER_PATTERN, fetch_cloudwatch_logs
+
+    client = MagicMock()
+    client.filter_log_events.side_effect = [
+        {"events": []},  # nothing matches the error pattern (pure latency incident)
+        {"events": [{"timestamp": 1_700_000_000_000, "message": "REPORT Duration: 6012 ms"}]},
+    ]
+    lines = fetch_cloudwatch_logs("/aws/lambda/x", datetime.now(timezone.utc), logs_client=client)
+    first, second = client.filter_log_events.call_args_list
+    assert first.kwargs["filterPattern"] == ERROR_FILTER_PATTERN
+    assert "filterPattern" not in second.kwargs
+    assert [l.message for l in lines] == ["REPORT Duration: 6012 ms"]

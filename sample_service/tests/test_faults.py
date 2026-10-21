@@ -1,0 +1,72 @@
+"""Planted demo faults fire for their trigger input and only for it."""
+
+import json
+
+import pytest
+from fastapi.testclient import TestClient
+
+from sample_service import faults
+from sample_service.app import app
+
+
+@pytest.fixture(autouse=True)
+def fast_faults(monkeypatch):
+    monkeypatch.setattr(faults, "DB_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(faults, "LEGACY_GATEWAY_LATENCY_S", 0.0)
+    monkeypatch.setattr(faults, "REPORT_MB_PER_DAY", 1)
+
+
+client = TestClient(app, raise_server_exceptions=False)
+
+
+def _json_lines(out: str):
+    return [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+
+
+def test_fault_catalog_lists_every_scenario():
+    ids = {f["id"] for f in client.get("/faults").json()["faults"]}
+    assert ids == {"orders", "checkout", "inventory", "payments", "reports"}
+
+
+def test_healthy_paths_return_200():
+    for path in ["/health", "/orders/101", "/checkout?sku=SKU-2&coupon=WELCOME10",
+                 "/inventory/SKU-1", "/payments/101/status", "/reports/export?days=2"]:
+        assert client.get(path).status_code == 200, path
+
+
+def test_checkout_valid_coupon_math():
+    body = client.get("/checkout?sku=SKU-1&qty=2&coupon=VIP20").json()
+    assert body["subtotal"] == 178.0 and body["discount"] == 35.6 and body["total"] == 142.4
+
+
+@pytest.mark.parametrize("path,component,error_type", [
+    ("/orders/999", "orders", "AttributeError"),
+    ("/checkout?sku=SKU-1&coupon=SPRING50", "checkout", "KeyError"),
+    ("/inventory/BULK-42", "inventory", "InventoryDbTimeout"),
+])
+def test_planted_errors_return_500_and_log_structured_event(path, component, error_type, capsys, caplog):
+    assert client.get(path).status_code == 500
+    events = [e for e in _json_lines(capsys.readouterr().out) if e["event"] == "unhandled_exception"]
+    assert events and events[-1]["component"] == component and events[-1]["error_type"] == error_type
+    # The plain traceback CollectContext parses must be in the log too.
+    assert any("Traceback (most recent call last)" in r.getMessage() for r in caplog.records)
+
+
+def test_traceback_parses_to_sample_service_frame(caplog):
+    from opspilot.collect_context import parse_stack_trace_from_logs
+
+    client.get("/orders/999")
+    text = next(r.getMessage() for r in caplog.records if "Traceback" in r.getMessage())
+    info = parse_stack_trace_from_logs([text])
+    assert info is not None and info.error_type == "AttributeError"
+    assert info.top_frame.file.endswith("sample_service/app.py") and info.top_frame.function == "get_order"
+
+
+def test_legacy_gateway_is_slow_but_succeeds(monkeypatch):
+    monkeypatch.setattr(faults, "LEGACY_GATEWAY_LATENCY_S", 0.05)
+    r = client.get("/payments/77/status?provider=legacy")
+    assert r.status_code == 200 and r.json()["status"] == "captured"
+
+
+def test_report_export_buffers_memory_per_day():
+    assert client.get("/reports/export?days=3").json()["buffered_mb"] == 3

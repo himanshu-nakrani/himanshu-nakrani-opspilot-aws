@@ -38,4 +38,9 @@ def get_order(order_id: str):
     }
 
 
+# Request logging plus the planted demo faults (checkout, inventory, payments, reports).
+from sample_service.faults import install as _install_demo_faults  # noqa: E402
+
+_install_demo_faults(app)
+
 handler = Mangum(app)
