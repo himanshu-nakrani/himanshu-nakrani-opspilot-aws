@@ -1,4 +1,4 @@
-import { EvalsReport, Incident, Stats, TriggerResponse } from './types';
+import { EvalsReport, Incident, Scenario, Stats, TriggerResponse } from './types';
 
 const API_BASE = '/api';
 
@@ -37,10 +37,13 @@ export const fetchIncident = (incidentId: string, signal?: AbortSignal) =>
 
 export const fetchStats = (signal?: AbortSignal) => request<Stats>('/stats', { signal });
 
-export const triggerSimulation = () =>
+export const fetchScenarios = (signal?: AbortSignal) => request<Scenario[]>('/scenarios', { signal });
+
+export const triggerSimulation = (scenario?: string) =>
   request<TriggerResponse>('/trigger', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(scenario ? { scenario } : {}),
   });
 
 export const fetchEvals = (signal?: AbortSignal) => request<EvalsReport>('/evals', { signal });

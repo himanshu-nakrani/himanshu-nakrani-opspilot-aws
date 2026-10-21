@@ -135,3 +135,39 @@ def test_cors_does_not_allow_arbitrary_origins():
             headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"},
         )
     assert res.headers.get("access-control-allow-origin") is None
+
+
+# --- Simulation scenario catalogue ---
+
+def test_scenarios_catalogue_covers_every_class():
+    from dashboard.scenarios import SCENARIOS
+    with TestClient(dashboard_app) as c:
+        data = c.get("/api/scenarios").json()
+    assert len(data) == len(SCENARIOS) >= 8
+    assert {s["classification"] for s in data} == {
+        "code_defect", "config_regression", "dependency", "resource", "insufficient_evidence",
+    }
+    assert {"id", "label", "description", "classification", "severity", "live_probe", "expected_outcome"} <= set(data[0])
+
+
+def test_every_scenario_simulates_and_matches_router():
+    from dashboard.scenarios import SCENARIOS
+    from opspilot.route import determine_route
+    with TestClient(dashboard_app) as c:
+        for sid, sc in SCENARIOS.items():
+            data = c.post("/api/trigger", json={"scenario": sid}).json()
+            inc = data["incident"]
+            assert data["scenario"] == sid and inc["classification"] == sc["classification"]
+            if inc["status"] == "DUPLICATE_SKIPPED":
+                continue
+            if inc["status"] == "PROPOSED":
+                assert determine_route(sc["classification"], sc["confidence"]) == "propose_fix"
+                assert inc["patch_diff"] and inc["pr_branch"]
+            else:
+                assert inc["status"] == "NOTIFIED" and inc["patch_diff"] is None and inc["pr_branch"] is None
+            assert inc["pr_url"] is None
+
+
+def test_unknown_scenario_is_rejected():
+    with TestClient(dashboard_app) as c:
+        assert c.post("/api/trigger", json={"scenario": "nope"}).status_code == 400

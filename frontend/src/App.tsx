@@ -58,7 +58,6 @@ export const App: React.FC = () => {
                 <h2 id="incident-stream-heading" tabIndex={-1} className="text-[15px] font-semibold tracking-[-0.015em] text-ink-50 focus:outline-none">
                   Incident stream
                 </h2>
-                <p className="mt-0.5 text-xs text-ink-400">Deduplicated alarms with cited evidence. Open one for the full audit trail.</p>
               </div>
             </div>
 
