@@ -17,6 +17,17 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 | M5 CodeBuild verification + notification | ✅ done |
 | M6 Offline eval harness (replay fixtures) | ✅ done |
 
+## Deploy
+
+One command deploys the whole stack (core, sample service with planted faults, pipeline), writes secrets and checks the result:
+
+```bash
+cp .env.deploy.example .env.deploy   # AWS profile/region, Jira, tokens
+bash scripts/deploy.sh                    # preflight -> bootstrap -> synth -> deploy -> secrets -> verify
+```
+
+See docs/DEMO_RUNBOOK.md for every subcommand and the demo flow.
+
 ## Repo map
 - docs/ARCHITECTURE.md — components, data flow, decisions and guardrails
 - docs/IMPLEMENTATION_SPEC.md — the build spec: layout, module contracts, acceptance criteria per milestone

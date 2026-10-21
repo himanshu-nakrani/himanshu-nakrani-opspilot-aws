@@ -1,10 +1,25 @@
-.PHONY: demo-deploy demo-faults demo-fault test deploy trigger-incident eval dashboard build-frontend frontend
+# One-shot full-stack deploy lives in bash scripts/deploy.sh (make help-deploy).
+.PHONY: deploy-all deploy-preflight deploy-synth deploy-verify deploy-destroy demo-deploy demo-faults demo-fault test deploy trigger-incident eval dashboard build-frontend frontend
 
 test:
 	AWS_ACCESS_KEY_ID=testing AWS_SECRET_ACCESS_KEY=testing AWS_SECURITY_TOKEN=testing AWS_SESSION_TOKEN=testing AWS_DEFAULT_REGION=us-east-1 JSII_RUNTIME_PACKAGE_CACHE_ROOT=/tmp/jsii-cache PYTHONPATH=src:. python3 -m pytest -v tests/ sample_service/tests/
 
-deploy:
-	JSII_RUNTIME_PACKAGE_CACHE_ROOT=/tmp/jsii-cache PYTHONPATH=src:. python3 infra/app.py
+deploy: deploy-all
+
+deploy-all:
+	bash scripts/deploy.sh up
+
+deploy-preflight:
+	bash scripts/deploy.sh preflight
+
+deploy-synth:
+	bash scripts/deploy.sh synth
+
+deploy-verify:
+	bash scripts/deploy.sh verify
+
+deploy-destroy:
+	bash scripts/deploy.sh destroy
 
 trigger-incident:
 	PYTHONPATH=src:. python3 scripts/trigger_incident.py
@@ -25,8 +40,7 @@ dashboard:
 # make demo-deploy                      deploy sample service + OpsPilot pipeline
 # make demo-faults                      list planted faults
 # make demo-fault SCENARIO=orders       orders|checkout|inventory|payments|reports
-demo-deploy:
-	JSII_RUNTIME_PACKAGE_CACHE_ROOT=/tmp/jsii-cache PYTHONPATH=src:. npx -y aws-cdk@2 deploy --all --require-approval never
+demo-deploy: deploy-all
 
 demo-faults:
 	python3 scripts/demo_faults.py list
