@@ -3,7 +3,7 @@ import { Classification, IncidentStatus } from '../types';
 
 const NEUTRAL = 'bg-transparent text-ink-300 border-ink-700';
 
-/** One hue per root-cause class. Used for badges, the stream rail and the breakdown bar. */
+/** Root-cause classes stay monochrome: colour is reserved for severity and health. */
 export interface ClassTone {
   badge: string;
   /** solid swatch for bars/rails */
@@ -13,15 +13,15 @@ export interface ClassTone {
 export function classificationTone(cls: Classification | null | undefined): ClassTone {
   switch (cls) {
     case 'code_defect':
-      return { badge: 'text-ink-100', swatch: 'bg-[#c49bff]' };
+      return { badge: 'text-ink-100', swatch: 'bg-ink-300' };
     case 'config_regression':
-      return { badge: 'text-ink-100', swatch: 'bg-[#e8c36a]' };
+      return { badge: 'text-ink-100', swatch: 'bg-ink-300' };
     case 'dependency':
-      return { badge: 'text-ink-100', swatch: 'bg-[#6fb8d6]' };
+      return { badge: 'text-ink-100', swatch: 'bg-ink-300' };
     case 'resource':
-      return { badge: 'text-ink-100', swatch: 'bg-[#e8896a]' };
+      return { badge: 'text-ink-100', swatch: 'bg-ink-300' };
     case 'insufficient_evidence':
-      return { badge: 'text-ink-300', swatch: 'bg-ink-500' };
+      return { badge: 'text-ink-400', swatch: 'bg-ink-600' };
     default:
       return { badge: 'text-ink-300', swatch: 'bg-ink-600' };
   }

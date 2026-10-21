@@ -56,7 +56,7 @@ export const IncidentBreakdown: React.FC<IncidentBreakdownProps> = ({ incidents,
                   <span className="font-mono text-2xs text-ink-500 tnum w-8 text-right">{share}%</span>
                 </span>
                 <span className="mt-1.5 block h-[3px] bg-ink-800/80 overflow-hidden" aria-hidden="true">
-                  <span className={`block h-full ${tone.swatch} opacity-80`} style={{ width: `${share}%` }} />
+                  <span className={`block h-full ${tone.swatch} opacity-70`} style={{ width: `${share}%` }} />
                 </span>
               </span>
             </>
