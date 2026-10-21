@@ -4,16 +4,21 @@
     python scripts/deploy_check.py whoami            # prints "<account> <region>"
     python scripts/deploy_check.py bootstrap-status  # exit 0 if CDKToolkit is deployed
     python scripts/deploy_check.py bedrock           # warn if the model is not usable
-    python scripts/deploy_check.py secrets           # push JIRA/GitHub/Slack values from env
+    python scripts/deploy_check.py secrets           # push the optional Slack webhook from env
+    python scripts/deploy_check.py opscenter         # check OpsCenter (ticketing) is reachable with these IAM creds
+    python scripts/deploy_check.py repo-status       # exit 0 if the CodeCommit repo already exists
+    python scripts/deploy_check.py seed-repo         # push this checkout to CodeCommit main (boto3, IAM only)
     python scripts/deploy_check.py verify            # post-deploy smoke test
     python scripts/deploy_check.py outputs           # print every stack output
 """
 
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.request
+from pathlib import Path
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
@@ -105,20 +110,24 @@ def secrets():
     """Write third-party credentials into the secrets CoreStack created. Only values present in env are written."""
     sm = session().client("secretsmanager")
     e = os.environ
-    if e.get("JIRA_API_TOKEN"):
-        _put(sm, "opspilot/jira", json.dumps({k: v for k, v in {
-            "api_token": e["JIRA_API_TOKEN"], "email": e.get("JIRA_EMAIL"), "base_url": e.get("JIRA_BASE_URL"),
-        }.items() if v}))
-    else:
-        print(f"  {YELLOW}SKIP{RESET} opspilot/jira   (JIRA_API_TOKEN not set; tickets fall back to a mock token and will fail live)")
-    if e.get("GITHUB_TOKEN"):
-        _put(sm, "opspilot/github", json.dumps({"token": e["GITHUB_TOKEN"]}))
-    else:
-        print(f"  {YELLOW}SKIP{RESET} opspilot/github (GITHUB_TOKEN not set; fix PRs will fail)")
     if e.get("SLACK_WEBHOOK_URL"):
         _put(sm, "opspilot/slack", json.dumps({"webhook_url": e["SLACK_WEBHOOK_URL"]}))
     else:
         print(f"  {YELLOW}SKIP{RESET} opspilot/slack  (SLACK_WEBHOOK_URL not set; on-call notify is skipped)")
+
+
+def opscenter():
+    """Ticketing is AWS Systems Manager OpsCenter: confirm these IAM credentials can query OpsItems."""
+    try:
+        resp = session().client("ssm").describe_ops_items(
+            OpsItemFilters=[{"Key": "Source", "Operator": "Equal", "Values": ["OpsPilot"]}], MaxResults=5)
+        n = len(resp.get("OpsItemSummaries", []))
+        print(f"  {GREEN}PASS{RESET} OpsCenter reachable ({n} recent OpsPilot OpsItem(s)); tickets use IAM, no secret needed")
+    except ClientError as e:
+        print(f"  {YELLOW}WARN{RESET} OpsCenter not usable by this identity ({e.response['Error']['Code']}). "
+              "The deploy grants the Lambda its own ssm:*OpsItem* permissions, so this only affects local checks.")
+    except (BotoCoreError, NoCredentialsError) as e:
+        print(f"  {YELLOW}WARN{RESET} OpsCenter check skipped: {e}")
 
 
 def stack_outputs(cf) -> dict:
@@ -189,13 +198,41 @@ def verify():
 
     print("Secrets")
     sm = s.client("secretsmanager")
-    for name in ("opspilot/jira", "opspilot/github", "opspilot/slack"):
+    for name in ("opspilot/slack",):
         try:
             versions = sm.list_secret_version_ids(SecretId=name)["Versions"]
             # CDK generates a random placeholder as the first version; a second version means someone set it.
             (ok if len(versions) > 1 else warn)(f"{name}: {'set' if len(versions) > 1 else 'still the CDK placeholder'}")
         except ClientError:
             bad(f"{name}: missing")
+
+    print("OpsCenter ticketing (AWS Systems Manager)")
+    try:
+        items = s.client("ssm").describe_ops_items(
+            OpsItemFilters=[{"Key": "Source", "Operator": "Equal", "Values": ["OpsPilot"]}], MaxResults=5
+        ).get("OpsItemSummaries", [])
+        ok(f"OpsCenter reachable; {len(items)} recent OpsPilot OpsItem(s)")
+    except ClientError as e:
+        warn(f"OpsCenter query failed for this identity: {e.response['Error']['Code']}")
+
+    print("CodeCommit source repo")
+    cc, repo = s.client("codecommit"), repo_name()
+    try:
+        meta = cc.get_repository(repositoryName=repo)["repositoryMetadata"]
+        ok(f"repository {repo} exists ({meta.get('cloneUrlHttp')})")
+        try:
+            head = cc.get_branch(repositoryName=repo, branchName="main")["branch"]["commitId"]
+            ok(f"branch main at {head[:10]}")
+            for path in ("src/opspilot/verify/buildspec.yml", "sample_service/app.py"):
+                try:
+                    cc.get_file(repositoryName=repo, commitSpecifier="main", filePath=path)
+                    ok(f"main has {path}")
+                except ClientError:
+                    bad(f"main is missing {path} (run: bash scripts/deploy.sh seed)")
+        except ClientError:
+            bad("branch main missing (run: bash scripts/deploy.sh seed)")
+    except ClientError as e:
+        bad(f"repository {repo} not reachable: {e.response['Error']['Code']}")
 
     print("Sample service (live HTTP)")
     url = stack_outputs(cf).get("SampleServiceUrl", "").rstrip("/")
@@ -229,9 +266,82 @@ def verify():
     print(f"{GREEN}All checks passed{RESET}, {len(warnings)} warning(s).")
 
 
+def repo_name() -> str:
+    return os.environ.get("CODECOMMIT_REPO", "opspilot-aws")
+
+
+def repo_status():
+    """Exit 0 if the CodeCommit repo exists (deploy.sh then imports it instead of creating it)."""
+    try:
+        session().client("codecommit").get_repository(repositoryName=repo_name())
+    except ClientError:
+        sys.exit(1)
+    sys.exit(0)
+
+
+SEED_BATCH = 100          # CodeCommit CreateCommit: max files per commit
+SEED_MAX_BYTES = 5 << 20  # stay under the 6 MB per-request limit
+
+
+def _tracked_files():
+    root = Path(__file__).resolve().parent.parent
+    names = subprocess.run(["git", "ls-files", "-z"], cwd=root, check=True, capture_output=True).stdout.split(b"\0")
+    files = []
+    for n in filter(None, names):
+        rel = n.decode()
+        p = root / rel
+        if p.is_file() and not p.is_symlink():
+            mode = "EXECUTABLE" if os.access(p, os.X_OK) else "NORMAL"
+            files.append((rel, p.read_bytes(), mode))
+    return files
+
+
+def seed_repo():
+    """Push the files tracked in this checkout to CodeCommit `main` with the CodeCommit API.
+
+    No git credentials, no git-remote-codecommit, no AWS CLI: just boto3 + IAM. If `main`
+    already exists the seed is skipped unless RESEED=1, which commits the current checkout
+    on top of main (changed/added files only; files deleted locally are not removed).
+    """
+    cc, repo = session().client("codecommit"), repo_name()
+    try:
+        parent = cc.get_branch(repositoryName=repo, branchName="main")["branch"]["commitId"]
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "BranchDoesNotExistException":
+            raise
+        parent = None
+    if parent and os.environ.get("RESEED") != "1":
+        print(f"  {GREEN}PASS{RESET} {repo}: main already seeded at {parent[:10]} (RESEED=1 to push this checkout again)")
+        return
+    files = _tracked_files()
+    batches, cur, size = [], [], 0
+    for f in files:
+        if cur and (len(cur) >= SEED_BATCH or size + len(f[1]) > SEED_MAX_BYTES):
+            batches.append(cur); cur, size = [], 0
+        cur.append(f); size += len(f[1])
+    if cur:
+        batches.append(cur)
+    for i, batch in enumerate(batches, 1):
+        kw = dict(repositoryName=repo, branchName="main", authorName="OpsPilot deploy", email="opspilot@noreply.local",
+                  commitMessage=f"Seed OpsPilot from local checkout ({i}/{len(batches)})",
+                  putFiles=[{"filePath": p, "fileContent": c, "fileMode": m} for p, c, m in batch])
+        if parent:
+            kw["parentCommitId"] = parent
+        try:
+            parent = cc.create_commit(**kw)["commitId"]
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoChangeException":
+                continue
+            raise
+    head = cc.get_branch(repositoryName=repo, branchName="main")["branch"]["commitId"]
+    print(f"  {GREEN}PASS{RESET} {repo}: main at {head[:10]} ({len(files)} files)")
+
+
 if __name__ == "__main__":
     cmds = {"whoami": whoami, "bootstrap-status": bootstrap_status, "bedrock": bedrock,
-            "secrets": secrets, "verify": verify, "outputs": outputs}
+            "secrets": secrets, "verify": verify, "outputs": outputs,
+            "repo-status": repo_status, "seed-repo": seed_repo,
+            "opscenter": opscenter}
     if len(sys.argv) != 2 or sys.argv[1] not in cmds:
         sys.exit(__doc__)
     cmds[sys.argv[1]]()

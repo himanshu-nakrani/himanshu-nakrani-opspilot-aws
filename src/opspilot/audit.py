@@ -6,6 +6,7 @@ instead of silently losing the audit trail. In replay mode it only logs.
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import boto3
@@ -34,3 +35,27 @@ def update_incident(incident_id: str, fields: Dict[str, str], dynamodb_client=No
         if is_live():
             raise
         logger.warning("Audit write skipped for %s in replay mode: %s", incident_id, e)
+
+
+def append_timeline(incident_id: str, event: str, detail: str = "", dynamodb_client=None) -> None:
+    """Append one {at, event, detail} entry to the incident's ``timeline`` list (status history)."""
+    table_name = os.environ.get("INCIDENTS_TABLE_NAME", "opspilot-incidents")
+    entry = {
+        "M": {
+            "at": {"S": datetime.now(timezone.utc).isoformat()},
+            "event": {"S": event},
+            "detail": {"S": detail[:1000]},
+        }
+    }
+    try:
+        (dynamodb_client or boto3.client("dynamodb")).update_item(
+            TableName=table_name,
+            Key={"incident_id": {"S": incident_id}},
+            UpdateExpression="SET #t = list_append(if_not_exists(#t, :empty), :e)",
+            ExpressionAttributeNames={"#t": "timeline"},
+            ExpressionAttributeValues={":e": {"L": [entry]}, ":empty": {"L": []}},
+        )
+    except Exception as e:
+        if is_live():
+            raise
+        logger.warning("Timeline write skipped for %s in replay mode: %s", incident_id, e)

@@ -221,6 +221,15 @@ def execute_get_commit_diff(
     except Exception as e:
         logger.warning("Git show failed for commit %s: %s", sha, e)
 
+    # Lambda has no checkout: ask CodeCommit (needs a full 40-char commit id).
+    if len(sha) == 40 and os.environ.get("CODECOMMIT_REPO") and os.environ.get("SCM_PROVIDER", "codecommit").lower() == "codecommit":
+        try:
+            from opspilot.fix.codecommit import CodeCommitClient
+
+            return {"commit_sha": sha, "commit": CodeCommitClient().get_commit_summary(sha), "source": "codecommit"}
+        except Exception as e:
+            logger.warning("CodeCommit commit lookup failed for %s: %s", sha, e)
+
     return {"commit_sha": sha, "error": "Commit diff not available"}
 
 

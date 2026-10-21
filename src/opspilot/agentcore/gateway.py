@@ -1,7 +1,7 @@
 """Amazon Bedrock AgentCore Gateway primitive for OpsPilot.
 
 Provides Model Context Protocol (MCP) compatibility and a secure tool gateway
-that decouples underlying tools (CloudWatch Logs, CodeCommit/Git, Jira, Sandbox)
+that decouples underlying tools (CloudWatch Logs, CodeCommit/Git, OpsCenter, Sandbox)
 from foundation models, validating schemas and enforcing AgentCore Policies.
 """
 

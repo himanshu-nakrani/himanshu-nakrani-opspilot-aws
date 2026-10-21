@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 import boto3
 import httpx
 
-from opspilot.audit import update_incident
+from opspilot.audit import append_timeline, update_incident
 from opspilot.config import is_live
 from opspilot.contracts import PrRef, RcaResult, TicketRef, VerificationResult
 
@@ -74,10 +74,10 @@ def build_slack_blocks(
                 }
             )
 
-    # Links: Jira and PR
+    # Links: OpsCenter OpsItem and PR
     link_parts = []
     if ticket:
-        link_parts.append(f"🎫 *Jira:* <{ticket.url}|{ticket.key}>")
+        link_parts.append(f"🎫 *OpsCenter:* <{ticket.url}|{ticket.key}>")
     if pr and pr.pr_url:
         link_parts.append(f"🐙 *GitHub PR:* <{pr.pr_url}|{pr.branch}>")
     if link_parts:
@@ -200,6 +200,41 @@ def send_sns_notification(
         return False
 
 
+def sync_ticket_status(
+    ticket: Optional[TicketRef],
+    final_status: str,
+    pr: Optional[PrRef],
+    verify: Optional[VerificationResult],
+    error: Optional[str],
+    ssm_client=None,
+) -> "tuple[Optional[str], bool]":
+    """Mirror the run outcome onto the OpsCenter OpsItem. Best effort: never blocks the notification.
+
+    Verified fix PR -> InProgress (human review/merge pending). Everything else stays Open with the
+    reason recorded. OpsPilot never sets Resolved; the on-call engineer does after merge/mitigation.
+    """
+    if not ticket or ticket.provider != "opscenter":
+        return None, False
+    from opspilot.ticketing import update_ticket  # local import keeps notify importable without ssm
+
+    if final_status == "VERIFIED":
+        status, note = "InProgress", "OpsPilot fix PR verified; awaiting human review and merge."
+    elif final_status == "NEEDS_HUMAN":
+        status, note = "Open", "Automated fix not verified; needs human."
+    elif final_status == "FAILED":
+        status, note = "Open", f"OpsPilot pipeline error: {(error or '')[:500]}"
+    else:
+        status, note = "Open", "RCA delivered; no automated fix proposed. On-call action required."
+    extra = {"run_status": final_status, "verdict": verify.verdict if verify else "unverified",
+             "pr_url": pr.pr_url if pr and pr.pr_url else ""}
+    try:
+        update_ticket(ticket, status, note, extra=extra, ssm_client=ssm_client)
+        return status, True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not update OpsItem %s: %s", ticket.key, e)
+        return ticket.status or "Open", False
+
+
 def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, Any]:
     """Lambda entry point for Step Functions Notify state."""
     logger.info("Notify state invoked with event keys: %s", list(event.keys()))
@@ -248,7 +283,14 @@ def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, A
         raise RuntimeError("No notification channel delivered the message")
     final_status = "FAILED" if error_str else ("VERIFIED" if verify and verify.verdict == "verified" else
                     "NEEDS_HUMAN" if (pr and pr.status == "needs_human") else "NOTIFIED")
-    update_incident(incident_id, {"status": final_status, "verdict": verify.verdict if verify else "unverified"})
+    ticket_status, ticket_synced = sync_ticket_status(ticket, final_status, pr, verify, error_str)
+    fields = {"status": final_status, "verdict": verify.verdict if verify else "unverified"}
+    if ticket_status:
+        fields["ticket_status"] = ticket_status
+    update_incident(incident_id, fields)
+    append_timeline(incident_id, final_status,
+                    f"ticket {ticket.key} -> {ticket_status}" if ticket and ticket_synced else
+                    (f"ticket {ticket.key} status sync failed" if ticket else "no ticket"))
 
     return {
         "status": "notified",
@@ -256,4 +298,6 @@ def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, A
         "sns_sent": sns_sent,
         "incident_id": incident_id,
         "verdict": verify.verdict if verify else "unverified",
+        "ticket_status": ticket_status,
+        "ticket_synced": ticket_synced,
     }

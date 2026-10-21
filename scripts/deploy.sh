@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # OpsPilot one-shot deploy: CoreStack + SampleServiceStack + PipelineStack.
 #
-#   bash scripts/deploy.sh                # = up: preflight -> bootstrap -> synth -> deploy -> secrets -> verify
+#   bash scripts/deploy.sh                # = up: preflight -> bootstrap -> synth -> deploy -> seed -> secrets -> verify
 #   bash scripts/deploy.sh preflight      # tools, Python deps, AWS identity, config, Bedrock access
 #   bash scripts/deploy.sh synth          # build Lambda assets + CloudFormation into cdk.out (no AWS writes)
 #   bash scripts/deploy.sh diff           # what would change in the account
-#   bash scripts/deploy.sh secrets        # (re)write Jira / GitHub / Slack secrets from env
+#   bash scripts/deploy.sh seed           # push this checkout to the CodeCommit repo's main (RESEED=1 to re-push)
+#   bash scripts/deploy.sh secrets        # (re)write the optional Slack secret from env (ticketing needs none)
 #   bash scripts/deploy.sh verify         # post-deploy smoke test (stacks, Lambdas, wiring, alarms, live URL)
 #   bash scripts/deploy.sh outputs        # print stack outputs
 #   bash scripts/deploy.sh dashboard      # build the frontend and run the OpsPilot dashboard locally
@@ -27,8 +28,8 @@ CDK_APP=(--app "$PY infra/app.py")
 export PYTHONPATH="src:.${PYTHONPATH:+:$PYTHONPATH}"
 # jsii refuses a group-writable ~/.cache; a private cache dir avoids that.
 export JSII_RUNTIME_PACKAGE_CACHE_ROOT="${JSII_RUNTIME_PACKAGE_CACHE_ROOT:-/tmp/jsii-cache-$(id -u)}"
-export GITHUB_REPO="${GITHUB_REPO:-himanshu-nakrani/himanshu-nakrani-opspilot-aws}"
-export JIRA_PROJECT_KEY="${JIRA_PROJECT_KEY:-OPS}"
+# Source control is AWS CodeCommit (IAM auth, no tokens). CoreStack creates the repo, or imports it if it exists.
+export CODECOMMIT_REPO="${CODECOMMIT_REPO:-opspilot-aws}"
 export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}"
 OUTPUTS_FILE="$ROOT/cdk-outputs.json"
 
@@ -46,6 +47,10 @@ resolve_env() {
   export CDK_DEFAULT_ACCOUNT="${who% *}"
   export CDK_DEFAULT_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-${who#* }}}"
   export AWS_REGION="$CDK_DEFAULT_REGION" AWS_DEFAULT_REGION="$CDK_DEFAULT_REGION"
+  # A repo kept from an earlier deploy (RETAIN) or pre-created by the event team is imported, not re-created.
+  if [[ -z "${CODECOMMIT_REPO_EXISTS:-}" ]]; then
+    if "$PY" scripts/deploy_check.py repo-status; then export CODECOMMIT_REPO_EXISTS=1; else export CODECOMMIT_REPO_EXISTS=0; fi
+  fi
 }
 
 preflight() {
@@ -66,13 +71,13 @@ preflight() {
   resolve_env
   pass "AWS account $CDK_DEFAULT_ACCOUNT, region $CDK_DEFAULT_REGION"
 
-  [[ "$GITHUB_REPO" == */* ]] || die "GITHUB_REPO must be owner/name (got '$GITHUB_REPO')"
-  pass "GITHUB_REPO=$GITHUB_REPO"
-  if [[ -z "${JIRA_BASE_URL:-}" ]]; then
-    warn "JIRA_BASE_URL not set; the stack will point at https://jira.example.com and ticket creation will fail live"
+  [[ "$CODECOMMIT_REPO" =~ ^[A-Za-z0-9_.-]{1,100}$ ]] || die "CODECOMMIT_REPO must be a CodeCommit repo name (got '$CODECOMMIT_REPO')"
+  if [[ "${CODECOMMIT_REPO_EXISTS:-}" == 1 ]]; then
+    pass "CodeCommit repo $CODECOMMIT_REPO exists; CoreStack will import it"
   else
-    pass "JIRA_BASE_URL=$JIRA_BASE_URL (project $JIRA_PROJECT_KEY)"
+    pass "CodeCommit repo $CODECOMMIT_REPO will be created by CoreStack"
   fi
+  "$PY" scripts/deploy_check.py opscenter
   "$PY" scripts/deploy_check.py bedrock
 }
 
@@ -97,6 +102,7 @@ deploy() {
   pass "outputs written to $(basename "$OUTPUTS_FILE")"
 }
 
+seed()    { step "Seed CodeCommit repo $CODECOMMIT_REPO"; "$PY" scripts/deploy_check.py seed-repo; }
 secrets() { step "Third-party secrets"; "$PY" scripts/deploy_check.py secrets; }
 verify()  { step "Verify";            "$PY" scripts/deploy_check.py verify; }
 
@@ -127,21 +133,23 @@ destroy() {
   fi
   $CDK destroy "${CDK_APP[@]}" --all --force
   echo "Note: Secrets Manager keeps opspilot/* secrets for a 7-30 day recovery window."
+  echo "Note: CodeCommit repo $CODECOMMIT_REPO is retained (fix PRs survive); the next deploy imports it."
 }
 
 cmd="${1:-up}"
 case "$cmd" in
-  up)        preflight; bootstrap; synth; deploy; secrets; verify; next_steps ;;
+  up)        preflight; bootstrap; synth; deploy; seed; secrets; verify; next_steps ;;
   preflight) preflight ;;
   bootstrap) resolve_env; bootstrap ;;
   synth)     if [[ "${OFFLINE:-0}" == 1 ]]; then export CDK_DEFAULT_ACCOUNT=123456789012 CDK_DEFAULT_REGION=us-east-1; else resolve_env; fi; synth ;;
   diff)      resolve_env; $CDK diff "${CDK_APP[@]}" --all ;;
   deploy)    resolve_env; deploy ;;
+  seed)      resolve_env; seed ;;
   secrets)   resolve_env; secrets ;;
   verify)    resolve_env; verify ;;
   outputs)   resolve_env; "$PY" scripts/deploy_check.py outputs ;;
   dashboard) dashboard ;;
   destroy)   destroy ;;
-  -h|--help|help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$cmd' (try: bash scripts/deploy.sh help)" ;;
 esac

@@ -1,7 +1,7 @@
 """Explicit runtime mode for OpsPilot.
 
 ``OPSPILOT_MODE=live`` (set by CDK on every Lambda) means: real Bedrock,
-real AWS, real GitHub/Jira, and any failure raises so Step Functions can
+real AWS (CodeCommit, OpsCenter), and any failure raises so Step Functions can
 route it. ``OPSPILOT_MODE=replay`` (the default for local runs, tests and
 evals) uses the offline/scripted model. Mode is never inferred from
 credential env vars.

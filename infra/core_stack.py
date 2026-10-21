@@ -1,8 +1,11 @@
-"""OpsPilot Core Stack: DynamoDB incidents table, Secrets Manager secrets, and SNS topic."""
+"""OpsPilot Core Stack: DynamoDB incidents table, CodeCommit source repo, Secrets Manager secrets, SNS topic."""
+
+import os
 
 import aws_cdk as cdk
 from aws_cdk import (
     Stack,
+    aws_codecommit as codecommit,
     aws_dynamodb as dynamodb,
     aws_secretsmanager as secretsmanager,
     aws_sns as sns,
@@ -29,20 +32,26 @@ class CoreStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # Secrets Manager references for 3rd-party services
-        self.jira_secret = secretsmanager.Secret(
-            self,
-            "JiraCredentialsSecret",
-            secret_name="opspilot/jira",
-            description="OpsPilot Jira API token and credentials",
-        )
+        # Ticketing is native AWS Systems Manager OpsCenter (IAM only); no ticketing secret is needed.
 
-        self.github_secret = secretsmanager.Secret(
-            self,
-            "GitHubTokenSecret",
-            secret_name="opspilot/github",
-            description="OpsPilot fine-grained GitHub PAT",
-        )
+        # AWS CodeCommit repository OpsPilot reads source from, branches, and opens fix PRs in.
+        # IAM-only (no external tokens). RETAIN so `destroy` never deletes fix history; when the
+        # repo already exists (re-deploy after destroy, or pre-provisioned by the event team)
+        # scripts/deploy.sh sets CODECOMMIT_REPO_EXISTS=1 and we import it instead.
+        repo_name = os.environ.get("CODECOMMIT_REPO", "opspilot-aws")
+        if os.environ.get("CODECOMMIT_REPO_EXISTS") == "1":
+            self.source_repo = codecommit.Repository.from_repository_name(self, "OpspilotSourceRepo", repo_name)
+        else:
+            repo = codecommit.Repository(
+                self,
+                "OpspilotSourceRepo",
+                repository_name=repo_name,
+                description="OpsPilot source + demo service; OpsPilot opens fix PRs here",
+            )
+            repo.apply_removal_policy(RemovalPolicy.RETAIN)
+            self.source_repo = repo
+        cdk.CfnOutput(self, "CodeCommitRepoName", value=self.source_repo.repository_name)
+        cdk.CfnOutput(self, "CodeCommitCloneUrlHttp", value=self.source_repo.repository_clone_url_http)
 
         self.slack_secret = secretsmanager.Secret(
             self,

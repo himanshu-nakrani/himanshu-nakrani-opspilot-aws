@@ -88,9 +88,15 @@ class ContextBundle(BaseModel):
 
 
 class TicketRef(BaseModel):
+    """An incident ticket. With the native AWS provider ``key`` is the OpsCenter OpsItem id (oi-...)."""
+
     key: str
     url: str
     incident_id: str
+    provider: str = "opscenter"
+    status: Optional[str] = None  # OpsCenter: Open | InProgress | Resolved
+    severity: Optional[str] = None  # OpsCenter severity "1".."4"
+    priority: Optional[int] = None  # OpsCenter priority 1..5
 
 
 class PrRef(BaseModel):

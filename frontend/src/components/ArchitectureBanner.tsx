@@ -6,7 +6,7 @@ const STEPS = [
   { title: 'Dedup ingest', detail: '15-min window' },
   { title: 'Collect context', detail: 'Logs & commits' },
   { title: 'Strands RCA', detail: 'AgentCore runtime' },
-  { title: 'Jira ticket', detail: 'ADF format' },
+  { title: 'OpsCenter OpsItem', detail: 'SSM, IAM auth' },
   { title: 'Patch PR', detail: 'Limits guardrail' },
   { title: 'CodeBuild verify', detail: '2-phase test' },
   { title: 'Slack & SNS', detail: 'Block Kit alert' },
