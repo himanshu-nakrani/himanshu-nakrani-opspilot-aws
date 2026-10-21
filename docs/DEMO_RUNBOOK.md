@@ -9,36 +9,18 @@ the OpsPilot Step Functions pipeline (ingest -> CollectContext -> RCA -> route
 
 ## 1. Deploy (once)
 
-Everything (CoreStack, SampleServiceStack, PipelineStack) deploys with one command:
+Prerequisites: AWS credentials for the target account and region, Node 18+,
+Python 3.12 deps (`pip install -r requirements.txt`), and a CDK bootstrap
+(`npx aws-cdk@2 bootstrap`). Docker is **not** required. Lambda assets are built
+locally with Linux/cp312 wheels (`infra/bundling.py`), with Docker as a fallback.
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-cp .env.deploy.example .env.deploy      # fill in AWS_PROFILE/AWS_REGION, Jira URL, tokens
-scripts/deploy.sh                       # or: make deploy
+make demo-deploy        # cdk deploy --all
 ```
-
-`scripts/deploy.sh` (no argument means `up`) runs these steps in order and stops at the first failure:
-
-| Step | What it does |
-|---|---|
-| preflight | Python 3.10+, Node 18+, CDK libs, pip/uv; reads the AWS account and region from STS; checks GITHUB_REPO and JIRA_BASE_URL; warns if the Bedrock model is not enabled |
-| bootstrap | Runs `cdk bootstrap aws://<account>/<region>` only if the CDKToolkit stack is missing |
-| synth | Bundles every Lambda for Linux/cp312 (no Docker) and writes cdk.out/ |
-| deploy | `cdk deploy --all`; stack outputs go to cdk-outputs.json |
-| secrets | Writes JIRA_API_TOKEN, GITHUB_TOKEN and SLACK_WEBHOOK_URL into opspilot/jira, opspilot/github and opspilot/slack. Blank values are skipped |
-| verify | Checks the 3 stacks, 9 Lambdas, the opspilot state machine, the EventBridge rule and its target, the 6 alarms and the 3 secrets, then calls GET /health and GET /faults on the live service |
-
-Other commands: `preflight`, `synth` (`OFFLINE=1` synthesizes without AWS credentials), `diff`,
-`secrets`, `verify`, `outputs`, `dashboard` (builds the frontend and serves the OpsPilot
-dashboard on :8000) and `destroy`. `scripts/deploy.sh help` lists them. Neither Docker nor the AWS CLI is needed.
-
-Settings that become Lambda environment values (GITHUB_REPO, JIRA_BASE_URL, JIRA_PROJECT_KEY,
-JIRA_EMAIL, BEDROCK_MODEL_ID) are read at synth time. If you change one, run deploy again. Secrets
-can be changed at any time with `scripts/deploy.sh secrets`.
 
 Outputs: `SampleServiceUrl` (the service) and the `OpsPilot-SampleService`
 CloudWatch dashboard (alarm status, requests vs errors, p95 latency, recent
-exceptions). `verify` prints both links.
+exceptions).
 
 ## 2. Planted faults
 
@@ -70,4 +52,4 @@ starts within seconds of that. Then check the OpsPilot dashboard, Jira and GitHu
 - Run **one scenario at a time**. CollectContext reads the whole service log group.
 - Dedup is per alarm name for 15 minutes, so repeating a scenario inside that window does not open a new incident. An alarm also has to go back to OK before it can fire again.
 - CollectContext now pulls error and warning events first (`?Traceback ?ERROR ...`) and falls back to the raw window. Before this, steady traffic pushed the traceback out of the first 50 events.
-- The Function URL is public (auth NONE) and serves only the demo service. Run `scripts/deploy.sh destroy` after the event.
+- The Function URL is public (auth NONE) and serves only the demo service. Run `cdk destroy --all` after the event.
