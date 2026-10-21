@@ -1,4 +1,4 @@
-import { EvalsReport, Incident, Scenario, Stats, TriggerResponse } from './types';
+import { AgentRun, AgentRunSummary, EvalsReport, Incident, Scenario, Stats, TriggerResponse } from './types';
 
 const API_BASE = '/api';
 
@@ -34,6 +34,11 @@ export const fetchIncidents = (signal?: AbortSignal) => request<Incident[]>('/in
 
 export const fetchIncident = (incidentId: string, signal?: AbortSignal) =>
   request<Incident>(`/incidents/${encodeURIComponent(incidentId)}`, { signal });
+
+export const fetchRuns = (signal?: AbortSignal) => request<AgentRunSummary[]>('/runs', { signal });
+
+export const fetchRun = (runId: string, signal?: AbortSignal) =>
+  request<AgentRun>(`/runs/${encodeURIComponent(runId)}`, { signal });
 
 export const fetchStats = (signal?: AbortSignal) => request<Stats>('/stats', { signal });
 

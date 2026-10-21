@@ -52,6 +52,54 @@ export interface Incident {
   pr_url?: string | null;
   patch_diff?: string | null;
   source?: IncidentSource;
+  /** set when the dashboard ran the RCA agent itself and kept its trace */
+  agent_run_id?: string | null;
+}
+
+export type SpanKind = 'cycle' | 'model' | 'tool' | 'step';
+
+export interface TraceSpan {
+  id: string;
+  parent_id: string | null;
+  depth: number;
+  kind: SpanKind;
+  name: string;
+  /** offset from the first span, ms */
+  start_ms: number | null;
+  duration_ms: number | null;
+  status: 'ok' | 'error' | 'incomplete' | (string & {});
+  policy_status?: string;
+  input: string | null;
+  output: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  model_latency_ms: number | null;
+}
+
+export interface AgentRunSummary {
+  run_id: string;
+  incident_id: string;
+  started_at: string | null;
+  duration_ms: number;
+  status: 'completed' | 'failed' | 'no_rca_submitted' | (string & {});
+  error: string | null;
+  model: string | null;
+  /** true when the scripted offline model ran: token counts and model latencies are fixed stand-ins */
+  offline_model: boolean;
+  cycles: number | null;
+  tool_calls: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  policy_violations: number;
+  route: string | null;
+  classification: Classification | null;
+  confidence: number | null;
+}
+
+export interface AgentRun extends AgentRunSummary {
+  spans: TraceSpan[];
+  policy_audit: Record<string, unknown>[];
 }
 
 export interface Stats {

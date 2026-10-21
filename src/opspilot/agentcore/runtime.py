@@ -9,6 +9,7 @@ import logging
 import os
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import boto3
@@ -26,6 +27,14 @@ from opspilot.rca.prompts import SYSTEM_PROMPT, build_user_prompt
 logger = logging.getLogger(__name__)
 
 AGENTCORE_SYSTEM_PROMPT = SYSTEM_PROMPT  # single shared prompt (opspilot.rca.prompts)
+
+
+def _capture_metrics(session: "AgentCoreSession", agent: Any) -> None:
+    """Keep the Strands event-loop trace on the session so callers can show the run."""
+    try:
+        session.agent_metrics = agent.event_loop_metrics.get_summary()
+    except Exception as e:  # tracing must never break the RCA path
+        logger.warning("Could not capture agent metrics: %s", e)
 
 
 class AgentCoreSession:
@@ -49,6 +58,11 @@ class AgentCoreSession:
             self.memory.context_bundle = bundle
         self.start_time = time.perf_counter()
         self.end_time: Optional[float] = None
+        self.started_at = datetime.now(timezone.utc).isoformat()
+        # Strands EventLoopMetrics.get_summary() after the run (cycles, spans, token usage).
+        self.agent_metrics: Optional[Dict[str, Any]] = None
+        self.model_name: Optional[str] = None
+        self.error: Optional[str] = None
 
     def close(self) -> float:
         """Mark session complete and return total elapsed duration in milliseconds."""
@@ -65,6 +79,10 @@ class AgentCoreSession:
             "memory": self.memory.to_dict(),
             "policy_violations": len(self.policy.audit_log),
             "policy_audit": self.policy.audit_log,
+            "started_at": self.started_at,
+            "model_name": self.model_name,
+            "error": self.error,
+            "agent_metrics": self.agent_metrics,
         }
 
 
@@ -307,13 +325,17 @@ class AgentCoreRuntime:
             max_tool_calls=max_turns,
         )
 
+        session.model_name = type(agent.model).__name__
         prompt = build_user_prompt(bundle)
         try:
             agent_result = agent(prompt)
             duration_ms = session.close()
+            _capture_metrics(session, agent)
             logger.info("AgentCore session %s completed in %.1f ms", session.session_id, duration_ms)
         except Exception as e:
             session.close()
+            session.error = f"{type(e).__name__}: {e}"
+            _capture_metrics(session, agent)
             logger.error("Agent execution error for %s: %s", bundle.incident_id, e)
             rca_result = abstain(bundle, f"RCA agent failed ({type(e).__name__}); no analysis was produced.")
             self.emit_cloudwatch_metrics(session, rca_result)
