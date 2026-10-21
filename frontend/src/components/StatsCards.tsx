@@ -13,9 +13,8 @@ const Cell: React.FC<{
   unit?: string;
   footnote: React.ReactNode;
   emphasis?: boolean;
-  meter?: number | null;
   index: number;
-}> = ({ label, value, unit, footnote, emphasis, meter, index }) => (
+}> = ({ label, value, unit, footnote, emphasis, index }) => (
   <div
     className="px-4 sm:px-5 py-4 motion-safe:animate-rise-in"
     style={{ animationDelay: `${40 + index * index * 12 + index * 30}ms` }}
@@ -31,15 +30,7 @@ const Cell: React.FC<{
       </span>
       {unit && <span className="ml-1 text-xs text-ink-400">{unit}</span>}
     </dd>
-    {meter !== undefined && (
-      <div className="mt-3 h-[3px] bg-ink-800 rounded-sm overflow-hidden" aria-hidden="true">
-        <div
-          className={`h-full ${emphasis ? 'bg-ok-400' : 'bg-ink-300'}`}
-          style={{ width: `${Math.max(0, Math.min(1, meter ?? 0)) * 100}%` }}
-        />
-      </div>
-    )}
-    <p className="mt-2 text-2xs text-ink-300">{footnote}</p>
+    <p className="mt-2.5 text-2xs text-ink-400">{footnote}</p>
   </div>
 );
 
@@ -70,7 +61,6 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ stats }) => {
           label="Mean RCA confidence"
           value={stats ? pct(stats.mean_confidence) : '—'}
           unit={stats && stats.mean_confidence !== null ? '%' : undefined}
-          meter={stats ? stats.mean_confidence : null}
           footnote="Fix route requires ≥ 0.60"
         />
         <Cell
@@ -84,7 +74,6 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ stats }) => {
           label="Verification pass rate"
           value={stats ? pct(stats.verification_pass_rate) : '—'}
           unit={stats && stats.verification_pass_rate !== null ? '%' : undefined}
-          meter={stats ? stats.verification_pass_rate : null}
           footnote={verifyFootnote}
         />
 

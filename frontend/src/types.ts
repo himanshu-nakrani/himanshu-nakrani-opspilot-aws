@@ -110,9 +110,22 @@ export interface EvalsReport {
   details: FixtureEvalDetail[];
 }
 
+export interface Scenario {
+  id: string;
+  label: string;
+  description: string;
+  classification: Classification;
+  severity: 'sev1' | 'sev2' | 'sev3' | 'sev4';
+  /** true when the scenario sends real requests to sample_service */
+  live_probe: boolean;
+  expected_outcome: IncidentStatus;
+}
+
 export interface TriggerResponse {
   status: string;
   simulated: boolean;
+  scenario?: string;
+  live_probe?: boolean;
   ingest_mode: 'live' | 'offline';
   ingest_status: string;
   failed_calls: number;

@@ -135,3 +135,110 @@ def test_cors_does_not_allow_arbitrary_origins():
             headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"},
         )
     assert res.headers.get("access-control-allow-origin") is None
+
+
+# --- Simulation scenario catalogue ---
+
+def test_scenarios_catalogue_covers_every_class():
+    from dashboard.scenarios import SCENARIOS
+    with TestClient(dashboard_app) as c:
+        data = c.get("/api/scenarios").json()
+    assert len(data) == len(SCENARIOS) >= 8
+    assert {s["classification"] for s in data} == {
+        "code_defect", "config_regression", "dependency", "resource", "insufficient_evidence",
+    }
+    assert {"id", "label", "description", "classification", "severity", "live_probe", "expected_outcome"} <= set(data[0])
+
+
+def _scenario_rca(sid, sc):
+    from opspilot.contracts import RcaResult
+    return RcaResult(
+        incident_id=f"inc-{sid}",
+        classification=sc["classification"],
+        severity=sc["severity"],
+        confidence=sc["confidence"],
+        summary=sc["summary"],
+        suspected_location=sc.get("suspected_location"),
+        evidence=sc["evidence"],
+        suggested_fix_strategy=sc.get("suggested_fix_strategy") or "n/a",
+    )
+
+
+def test_every_scenario_simulates_and_matches_router():
+    """Every scenario's dashboard outcome must equal opspilot.route.route_rca, both ways."""
+    from dashboard.scenarios import SCENARIOS
+    from opspilot.route import route_rca
+    with TestClient(dashboard_app) as c:
+        for sid, sc in SCENARIOS.items():
+            data = c.post("/api/trigger", json={"scenario": sid}).json()
+            inc = data["incident"]
+            assert data["scenario"] == sid and inc["classification"] == sc["classification"]
+            assert inc["status"] != "DUPLICATE_SKIPPED", sid
+            route = route_rca(_scenario_rca(sid, sc))
+            if route == "propose_fix":
+                assert inc["status"] == "PROPOSED", sid
+                assert inc["patch_diff"] and inc["pr_branch"], sid
+            else:
+                assert inc["status"] == "NOTIFIED", sid
+                assert inc["patch_diff"] is None and inc["pr_branch"] is None, sid
+            assert inc["pr_url"] is None
+
+
+def test_catalogue_has_both_routes():
+    from dashboard.scenarios import SCENARIOS
+    from opspilot.route import route_rca
+    routes = {route_rca(_scenario_rca(sid, sc)) for sid, sc in SCENARIOS.items()}
+    assert routes == {"propose_fix", "notify"}
+
+
+def test_high_confidence_without_stack_frame_notifies():
+    """determine_route would say propose_fix here; the stack-frame check must still veto it."""
+    import copy
+    from dashboard.scenarios import SCENARIOS, expected_status
+    from opspilot.route import determine_route, route_rca
+    sc = copy.deepcopy(SCENARIOS["null_order"])
+    sc["confidence"] = 0.95
+    sc["evidence"] = [e for e in sc["evidence"] if e["kind"] != "stack_frame"]
+    assert sc["evidence"]
+    assert determine_route(sc["classification"], sc["confidence"]) == "propose_fix"
+    assert route_rca(_scenario_rca("null_order", sc)) == "notify"
+    assert expected_status(sc) == "NOTIFIED"
+
+
+def test_simulation_identities_are_distinct_per_scenario():
+    from dashboard.scenarios import SCENARIOS, simulation_alarm_name
+    names = [simulation_alarm_name(sid) for sid in SCENARIOS]
+    assert len(set(names)) == len(names)
+    assert simulation_alarm_name("null_order") == SCENARIOS["null_order"]["alarm_name"]
+
+
+def test_different_scenarios_do_not_dedupe_but_repeats_do(monkeypatch):
+    """With a deduping ingest (as in live AWS mode), two different scenarios in one window are
+    separate incidents, and re-running the same scenario is skipped as a duplicate."""
+    import dashboard.app as app_mod
+    from datetime import datetime, timezone
+    from opspilot.ingest import compute_incident_id
+
+    seen = set()
+
+    def fake_ingest(event):
+        when = datetime.fromisoformat(event["time"])
+        inc_id, _, _ = compute_incident_id(event["detail"]["alarmName"], when.replace(minute=0, second=0))
+        if inc_id in seen:
+            return {"status": "duplicate", "incident_id": inc_id}
+        seen.add(inc_id)
+        return {"status": "started", "incident_id": inc_id}
+
+    monkeypatch.setattr(app_mod, "handle_alarm_event", fake_ingest)
+    with TestClient(dashboard_app) as c:
+        first = c.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
+        other = c.post("/api/trigger", json={"scenario": "config_env"}).json()["incident"]
+        again = c.post("/api/trigger", json={"scenario": "config_env"}).json()["incident"]
+    assert first["status"] == "PROPOSED"
+    assert other["status"] == "NOTIFIED"
+    assert again["status"] == "DUPLICATE_SKIPPED"
+
+
+def test_unknown_scenario_is_rejected():
+    with TestClient(dashboard_app) as c:
+        assert c.post("/api/trigger", json={"scenario": "nope"}).status_code == 400

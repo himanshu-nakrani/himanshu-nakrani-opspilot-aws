@@ -25,12 +25,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from opspilot.contracts import ContextBundle, RcaResult
 from opspilot.ingest import handle_alarm_event
 from opspilot.rca.agent import run_rca_agent
 from opspilot.route import route_rca
 from sample_service.app import app as sample_app
+from dashboard.scenarios import (
+    DEFAULT_SCENARIO,
+    SCENARIOS,
+    expected_status,
+    list_scenarios,
+    simulation_alarm_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -246,30 +254,49 @@ def get_stats() -> Dict[str, Any]:
     }
 
 
-@dashboard_app.post("/api/trigger")
-def trigger_incident_simulation() -> Dict[str, Any]:
-    """Simulate incident: call bad endpoint 5 times and trigger alarm ingestion.
+class TriggerRequest(BaseModel):
+    scenario: Optional[str] = None
 
-    This is a demo path. The RCA fields below are a canned example, and the response is
-    flagged ``simulated`` so the UI can label it; no real ticket or PR is created.
+
+@dashboard_app.get("/api/scenarios")
+def get_scenarios() -> List[Dict[str, Any]]:
+    """Catalogue of incident scenarios the dashboard can simulate."""
+    return list_scenarios()
+
+
+@dashboard_app.post("/api/trigger")
+def trigger_incident_simulation(body: Optional[TriggerRequest] = None) -> Dict[str, Any]:
+    """Simulate an incident from the scenario catalogue (default: the planted null-order bug).
+
+    This is a demo path. The RCA fields are a canned example, and the response is flagged
+    ``simulated`` so the UI can label it; no real ticket or PR is created. Only scenarios
+    with a ``probe_path`` send real traffic to sample_service.
     """
-    client = TestClient(sample_app, raise_server_exceptions=False)
+    scenario_id = (body.scenario if body and body.scenario else DEFAULT_SCENARIO)
+    sc = SCENARIOS.get(scenario_id)
+    if sc is None:
+        raise HTTPException(status_code=400, detail=f"Unknown scenario '{scenario_id}'")
+
     failed_calls = 0
-    for _ in range(5):
-        if client.get("/orders/999").status_code >= 500:
-            failed_calls += 1
+    probe_path = sc.get("probe_path")
+    if probe_path:
+        client = TestClient(sample_app, raise_server_exceptions=False)
+        for _ in range(5):
+            if client.get(probe_path).status_code >= 500:
+                failed_calls += 1
 
     now = datetime.now(timezone.utc).isoformat()
+    alarm_name = simulation_alarm_name(scenario_id)
     alarm_event = {
         "source": "aws.cloudwatch",
         "detail-type": "CloudWatch Alarm State Change",
         "time": now,
         "detail": {
-            "alarmName": "OpsPilotSampleServiceErrors",
+            "alarmName": alarm_name,
             "state": {
                 "value": "ALARM",
                 "timestamp": now,
-                "reason": f"Threshold Crossed: {failed_calls} unhandled AttributeError tracebacks",
+                "reason": "Threshold Crossed: " + sc["alarm_reason"].format(failed=failed_calls),
             },
         },
     }
@@ -286,54 +313,50 @@ def trigger_incident_simulation() -> Dict[str, Any]:
 
     ingest_status = res.get("status", "unknown")
     duplicate = ingest_status != "started"
+    outcome = expected_status(sc)
+    proposes_fix = outcome == "PROPOSED" and not duplicate
     ticket_key = f"OPS-{stable_ticket_number(inc_id)}"
 
     new_inc = {
         "incident_id": inc_id,
         "service": "sample-service",
-        "alarm_name": "OpsPilotSampleServiceErrors",
+        "alarm_name": alarm_name,
         "detected_at": now,
-        "status": "DUPLICATE_SKIPPED" if duplicate else "PROPOSED",
-        "classification": "code_defect",
-        "confidence": 0.94,
-        "severity": "sev2",
-        "summary": "AttributeError on missing order ID in sample_service/app.py line 29: None.total accessed without null check.",
-        "suspected_location": {
-            "file": "sample_service/app.py",
-            "line": 29,
-            "function": "get_order",
-        },
-        "evidence": [
-            {"kind": "log_line", "ref": "log-1", "claim": "AttributeError: 'NoneType' object has no attribute 'total'"},
-            {"kind": "stack_frame", "ref": "sample_service/app.py:29", "claim": "Exception raised on order.total access"},
-        ],
+        "status": "DUPLICATE_SKIPPED" if duplicate else outcome,
+        "classification": sc["classification"],
+        "confidence": sc["confidence"],
+        "severity": sc["severity"],
+        "summary": sc["summary"],
+        "suspected_location": sc.get("suspected_location"),
+        "evidence": sc["evidence"],
         "ticket_key": None if duplicate else ticket_key,
         "ticket_url": None,
-        "pr_branch": None if duplicate else f"opspilot/{ticket_key}",
+        "pr_branch": f"opspilot/{ticket_key}" if proposes_fix else None,
         "pr_url": None,
-        "patch_diff": None if duplicate else """--- a/sample_service/app.py
-+++ b/sample_service/app.py
-@@ -28,3 +29,5 @@
- def get_order(order_id: str):
-     order: Optional[Order] = ORDERS.get(order_id)
-+    if order is None:
-+        raise HTTPException(status_code=404, detail="Order not found")
-""",
-        "suggested_fix_strategy": "Return 404 HTTPException if order ID does not exist in store.",
+        "patch_diff": sc.get("patch_diff") if proposes_fix else None,
+        "suggested_fix_strategy": sc.get("suggested_fix_strategy"),
         "source": "simulated",
+        "scenario": scenario_id,
     }
     LOCAL_INCIDENTS_CACHE.insert(0, new_inc)
     del LOCAL_INCIDENTS_CACHE[LOCAL_INCIDENTS_CACHE_MAX:]
 
+    if probe_path:
+        message = f"{failed_calls} calls to {probe_path} returned 5xx. Ingested incident {inc_id} ({ingest_mode} mode)."
+    else:
+        message = f"Synthetic alarm '{sc['label']}'. Ingested incident {inc_id} ({ingest_mode} mode)."
+
     return {
         "status": "success",
         "simulated": True,
+        "scenario": scenario_id,
+        "live_probe": bool(probe_path),
         "ingest_mode": ingest_mode,
         "ingest_status": ingest_status,
         "failed_calls": failed_calls,
         "incident_id": inc_id,
         "summary": new_inc["summary"],
-        "message": f"{failed_calls} calls to /orders/999 returned 5xx. Ingested incident {inc_id} ({ingest_mode} mode).",
+        "message": message,
         "incident": new_inc,
     }
 

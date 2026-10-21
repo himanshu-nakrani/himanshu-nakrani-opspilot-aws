@@ -4,6 +4,7 @@ import { Incident } from '../types';
 import { classificationTone, confidenceTone, severityBadge, statusBadge } from '../lib/badges';
 import { formatRelative, formatTimestamp, humanize } from '../lib/format';
 import { btn, chip, focusRing } from '../ui/styles';
+import { CodeText } from '../ui/CodeText';
 
 interface IncidentListProps {
   incidents: Incident[];
@@ -224,7 +225,7 @@ export const IncidentList: React.FC<IncidentListProps> = ({
       {!isLoading && filtered.length > 0 && (
         <>
           <div
-            className="hidden md:grid grid-cols-[52px_minmax(0,1fr)_150px_124px_64px_84px] gap-4 px-4 py-2 border-b border-ink-800 text-2xs uppercase tracking-[0.1em] text-ink-500"
+            className="hidden md:grid grid-cols-[52px_minmax(0,1fr)_164px_116px_52px_76px] gap-4 px-4 py-2 border-b border-ink-800 text-2xs uppercase tracking-[0.1em] text-ink-500 font-medium"
             aria-hidden="true"
           >
             <span>Sev</span>
@@ -247,7 +248,7 @@ export const IncidentList: React.FC<IncidentListProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelectIncident(inc)}
-                    className="group relative w-full text-left px-4 py-3 grid grid-cols-[auto_minmax(0,1fr)_auto] md:grid-cols-[52px_minmax(0,1fr)_150px_124px_64px_84px] gap-x-4 gap-y-1.5 items-start md:items-center hover:bg-ink-850 transition-colors duration-100 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal-400"
+                    className="group relative w-full text-left px-4 py-2.5 grid grid-cols-[auto_minmax(0,1fr)_auto] md:grid-cols-[52px_minmax(0,1fr)_164px_116px_52px_76px] gap-x-4 gap-y-1.5 items-start md:items-center hover:bg-ink-850 transition-colors duration-100 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal-400"
                   >
                     {inc.severity === 'sev1' && (
                       <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-red-500" aria-hidden="true" />
@@ -260,10 +261,10 @@ export const IncidentList: React.FC<IncidentListProps> = ({
 
                     <span className="min-w-0 block">
                       <span className="block text-[13px] leading-snug text-ink-50 line-clamp-2 md:line-clamp-1 group-hover:text-white" title={inc.summary ?? undefined}>
-                        {inc.summary || 'No summary available.'}
+                        {inc.summary ? <CodeText text={inc.summary} /> : 'No summary available.'}
                       </span>
-                      <span className="mt-1 flex flex-wrap items-center gap-x-2 font-mono text-2xs text-ink-400">
-                        <span className="text-ink-300">{inc.incident_id}</span>
+                      <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 font-mono text-2xs text-ink-500">
+                        <span className="text-ink-400">{inc.incident_id}</span>
                         <span className="text-ink-700" aria-hidden="true">·</span>
                         <span>{inc.service ?? 'unknown service'}</span>
                         {inc.ticket_key && (
@@ -286,7 +287,6 @@ export const IncidentList: React.FC<IncidentListProps> = ({
                       {/* compact cause + outcome for small screens */}
                       <span className="md:hidden mt-1.5 flex flex-wrap items-center gap-x-3 text-2xs">
                         <span className="inline-flex items-center gap-1.5 text-ink-200 capitalize">
-                          <span className={`w-1.5 h-1.5 rounded-full ${cls.swatch}`} aria-hidden="true" />
                           {humanize(inc.classification)}
                         </span>
                         <span className={`inline-flex items-center gap-1 ${status.text}`}>
@@ -296,9 +296,8 @@ export const IncidentList: React.FC<IncidentListProps> = ({
                       </span>
                     </span>
 
-                    <span className="hidden md:inline-flex items-center gap-2 text-xs text-ink-200 capitalize min-w-0">
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cls.swatch}`} aria-hidden="true" />
-                      <span className="truncate">{humanize(inc.classification)}</span>
+                    <span className={`hidden md:block truncate text-xs capitalize ${cls.badge}`}>
+                      {humanize(inc.classification)}
                     </span>
 
                     <span className={`hidden md:inline-flex items-center gap-1.5 text-xs ${status.text}`}>
@@ -308,19 +307,8 @@ export const IncidentList: React.FC<IncidentListProps> = ({
 
                     <span className="text-right">
                       <span className="sr-only">Confidence </span>
-                      <span className={`font-mono text-[13px] tnum ${tone.text}`}>{pct === null ? 'n/a' : pct}</span>
+                      <span className={`font-mono text-xs tnum ${tone.text}`}>{pct === null ? 'n/a' : pct}</span>
                       {pct !== null && <span className="font-mono text-2xs text-ink-500">%</span>}
-                      <span
-                        role="progressbar"
-                        aria-label="RCA confidence"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={pct ?? undefined}
-                        aria-valuetext={pct === null ? 'unknown' : `${pct}%`}
-                        className="ml-auto mt-1.5 block w-10 h-[3px] rounded-full bg-ink-700/70 overflow-hidden"
-                      >
-                        <span className={`block h-full rounded-full ${tone.bar}`} style={{ width: `${pct ?? 0}%` }} />
-                      </span>
                     </span>
 
                     <time
