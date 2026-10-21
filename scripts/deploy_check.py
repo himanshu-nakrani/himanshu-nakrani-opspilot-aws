@@ -4,7 +4,8 @@
     python scripts/deploy_check.py whoami            # prints "<account> <region>"
     python scripts/deploy_check.py bootstrap-status  # exit 0 if CDKToolkit is deployed
     python scripts/deploy_check.py bedrock           # warn if the model is not usable
-    python scripts/deploy_check.py secrets           # push Jira/Slack values from env
+    python scripts/deploy_check.py secrets           # push the optional Slack webhook from env
+    python scripts/deploy_check.py opscenter         # check OpsCenter (ticketing) is reachable with these IAM creds
     python scripts/deploy_check.py repo-status       # exit 0 if the CodeCommit repo already exists
     python scripts/deploy_check.py seed-repo         # push this checkout to CodeCommit main (boto3, IAM only)
     python scripts/deploy_check.py verify            # post-deploy smoke test
@@ -109,16 +110,24 @@ def secrets():
     """Write third-party credentials into the secrets CoreStack created. Only values present in env are written."""
     sm = session().client("secretsmanager")
     e = os.environ
-    if e.get("JIRA_API_TOKEN"):
-        _put(sm, "opspilot/jira", json.dumps({k: v for k, v in {
-            "api_token": e["JIRA_API_TOKEN"], "email": e.get("JIRA_EMAIL"), "base_url": e.get("JIRA_BASE_URL"),
-        }.items() if v}))
-    else:
-        print(f"  {YELLOW}SKIP{RESET} opspilot/jira   (JIRA_API_TOKEN not set; tickets fall back to a mock token and will fail live)")
     if e.get("SLACK_WEBHOOK_URL"):
         _put(sm, "opspilot/slack", json.dumps({"webhook_url": e["SLACK_WEBHOOK_URL"]}))
     else:
         print(f"  {YELLOW}SKIP{RESET} opspilot/slack  (SLACK_WEBHOOK_URL not set; on-call notify is skipped)")
+
+
+def opscenter():
+    """Ticketing is AWS Systems Manager OpsCenter: confirm these IAM credentials can query OpsItems."""
+    try:
+        resp = session().client("ssm").describe_ops_items(
+            OpsItemFilters=[{"Key": "Source", "Operator": "Equal", "Values": ["OpsPilot"]}], MaxResults=5)
+        n = len(resp.get("OpsItemSummaries", []))
+        print(f"  {GREEN}PASS{RESET} OpsCenter reachable ({n} recent OpsPilot OpsItem(s)); tickets use IAM, no secret needed")
+    except ClientError as e:
+        print(f"  {YELLOW}WARN{RESET} OpsCenter not usable by this identity ({e.response['Error']['Code']}). "
+              "The deploy grants the Lambda its own ssm:*OpsItem* permissions, so this only affects local checks.")
+    except (BotoCoreError, NoCredentialsError) as e:
+        print(f"  {YELLOW}WARN{RESET} OpsCenter check skipped: {e}")
 
 
 def stack_outputs(cf) -> dict:
@@ -189,13 +198,22 @@ def verify():
 
     print("Secrets")
     sm = s.client("secretsmanager")
-    for name in ("opspilot/jira", "opspilot/slack"):
+    for name in ("opspilot/slack",):
         try:
             versions = sm.list_secret_version_ids(SecretId=name)["Versions"]
             # CDK generates a random placeholder as the first version; a second version means someone set it.
             (ok if len(versions) > 1 else warn)(f"{name}: {'set' if len(versions) > 1 else 'still the CDK placeholder'}")
         except ClientError:
             bad(f"{name}: missing")
+
+    print("OpsCenter ticketing (AWS Systems Manager)")
+    try:
+        items = s.client("ssm").describe_ops_items(
+            OpsItemFilters=[{"Key": "Source", "Operator": "Equal", "Values": ["OpsPilot"]}], MaxResults=5
+        ).get("OpsItemSummaries", [])
+        ok(f"OpsCenter reachable; {len(items)} recent OpsPilot OpsItem(s)")
+    except ClientError as e:
+        warn(f"OpsCenter query failed for this identity: {e.response['Error']['Code']}")
 
     print("CodeCommit source repo")
     cc, repo = s.client("codecommit"), repo_name()
@@ -322,7 +340,8 @@ def seed_repo():
 if __name__ == "__main__":
     cmds = {"whoami": whoami, "bootstrap-status": bootstrap_status, "bedrock": bedrock,
             "secrets": secrets, "verify": verify, "outputs": outputs,
-            "repo-status": repo_status, "seed-repo": seed_repo}
+            "repo-status": repo_status, "seed-repo": seed_repo,
+            "opscenter": opscenter}
     if len(sys.argv) != 2 or sys.argv[1] not in cmds:
         sys.exit(__doc__)
     cmds[sys.argv[1]]()

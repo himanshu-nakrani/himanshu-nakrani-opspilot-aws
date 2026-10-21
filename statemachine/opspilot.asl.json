@@ -136,7 +136,8 @@
       ],
       "Next": "Route",
       "Parameters": {
-        "rca.$": "$.rca"
+        "rca.$": "$.rca",
+        "incident.$": "$$.Execution.Input"
       }
     },
     "Route": {

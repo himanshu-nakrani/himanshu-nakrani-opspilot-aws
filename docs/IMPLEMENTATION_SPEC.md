@@ -10,7 +10,7 @@ src/opspilot/
   collect_context.py   handler(event) -> ContextBundle
   rca/agent.py         Bedrock Converse tool-use loop; tools in rca/tools.py
   route.py             (pure) classification+confidence -> route
-  jira_client.py       create_issue(rca) -> TicketRef   (ADF description)
+  ticketing.py         create_ticket(rca) -> TicketRef  (SSM OpsCenter OpsItem + DynamoDB)
   fix/agent.py         produce {repro_test, patch}; fix/git_ops.py apply/push/PR
   verify/buildspec.yml two-phase check (base must fail, fix must pass)
   notify.py            Slack Block Kit + SNS
@@ -20,7 +20,7 @@ sample_service/        FastAPI-on-Lambda (Mangum) app with GET /orders/{id};
                        + its own tests/ (pass on main; no test covers the bug)
 statemachine/opspilot.asl.json
 evals/fixtures/*.json  recorded context bundles + gold labels; evals/run_evals.py
-tests/                 unit tests for every module (Bedrock/Jira/CodeCommit mocked)
+tests/                 unit tests for every module (Bedrock/OpsCenter/CodeCommit mocked)
 Makefile               make test | make deploy | make trigger-incident | make eval
 .env.example
 ```
@@ -30,9 +30,9 @@ Makefile               make test | make deploy | make trigger-incident | make ev
 
 **M2 — RCA.** For the sample bug, `rca_result` validates against the schema, has `classification=code_defect`, names `sample_service/app.py` and the faulting line in `suspected_location`, and every evidence ref resolves. Unit test: given a context bundle with no stack trace, the result is `insufficient_evidence`.
 
-**M3 — Ticket.** A Jira issue is created in `JIRA_PROJECT_KEY` with labels `opspilot`, `cls:code_defect`, the RCA summary and evidence. Idempotent: re-running the step for the same incident ID returns the existing key (search by label `inc:<id>`).
+**M3 — Ticket.** An AWS Systems Manager OpsCenter OpsItem is created (Source `OpsPilot`, severity/priority from the RCA severity) with the RCA summary and evidence. Idempotent: re-running the step for the same incident ID returns the existing OpsItem (DynamoDB record first, then DescribeOpsItems on operational data `opspilot:incident_id`).
 
-**M4 — PR.** Branch `opspilot/<JIRA-KEY>` holds the fix + a new test under `sample_service/tests/test_opspilot_<key>.py`. PR title `[OpsPilot] <JIRA-KEY>: <summary>`; the body includes RCA, evidence, the Jira link and "🤖 generated — requires human review". Patch limits from ARCHITECTURE.md are enforced in code with unit tests.
+**M4 — PR.** Branch `opspilot/<opsitem-id>` holds the fix + a new test under `sample_service/tests/test_opspilot_<key>.py`. PR title `[OpsPilot] <opsitem-id>: <summary>`; the body includes RCA, evidence, the OpsItem link and "🤖 generated — requires human review". Patch limits from ARCHITECTURE.md are enforced in code with unit tests.
 
 **M5 — Verify + notify.** CodeBuild reports `repro_fails_on_base=true`, `suite_passes_on_fix=true`. The Slack message holds all links and the verdict. Forced-failure test: a deliberately wrong patch gives one retry, then a draft PR with a `needs-human` label, and the notification says so.
 
@@ -44,7 +44,7 @@ AWS_REGION=
 BEDROCK_MODEL_ID=            # current Claude Sonnet model / inference profile in your region
 SCM_PROVIDER=codecommit      # default; github is a local-dev-only fallback
 CODECOMMIT_REPO=opspilot-aws # CodeCommit repo the patch agent targets (IAM auth, no token)
-JIRA_BASE_URL=  JIRA_EMAIL=  JIRA_PROJECT_KEY=  JIRA_TOKEN_SECRET_ARN=
+TICKETING_PROVIDER=opscenter OPSCENTER_SOURCE=OpsPilot   # IAM auth, no secret
 SLACK_WEBHOOK_SECRET_ARN=    NOTIFY_EMAIL=
 RCA_MAX_TURNS=6  RCA_CONFIDENCE_THRESHOLD=0.6  DEDUP_WINDOW_MIN=15
 ```

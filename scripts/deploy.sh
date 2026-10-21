@@ -6,7 +6,7 @@
 #   bash scripts/deploy.sh synth          # build Lambda assets + CloudFormation into cdk.out (no AWS writes)
 #   bash scripts/deploy.sh diff           # what would change in the account
 #   bash scripts/deploy.sh seed           # push this checkout to the CodeCommit repo's main (RESEED=1 to re-push)
-#   bash scripts/deploy.sh secrets        # (re)write Jira / Slack secrets from env
+#   bash scripts/deploy.sh secrets        # (re)write the optional Slack secret from env (ticketing needs none)
 #   bash scripts/deploy.sh verify         # post-deploy smoke test (stacks, Lambdas, wiring, alarms, live URL)
 #   bash scripts/deploy.sh outputs        # print stack outputs
 #   bash scripts/deploy.sh dashboard      # build the frontend and run the OpsPilot dashboard locally
@@ -30,7 +30,6 @@ export PYTHONPATH="src:.${PYTHONPATH:+:$PYTHONPATH}"
 export JSII_RUNTIME_PACKAGE_CACHE_ROOT="${JSII_RUNTIME_PACKAGE_CACHE_ROOT:-/tmp/jsii-cache-$(id -u)}"
 # Source control is AWS CodeCommit (IAM auth, no tokens). CoreStack creates the repo, or imports it if it exists.
 export CODECOMMIT_REPO="${CODECOMMIT_REPO:-opspilot-aws}"
-export JIRA_PROJECT_KEY="${JIRA_PROJECT_KEY:-OPS}"
 export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}"
 OUTPUTS_FILE="$ROOT/cdk-outputs.json"
 
@@ -78,11 +77,7 @@ preflight() {
   else
     pass "CodeCommit repo $CODECOMMIT_REPO will be created by CoreStack"
   fi
-  if [[ -z "${JIRA_BASE_URL:-}" ]]; then
-    warn "JIRA_BASE_URL not set; the stack will point at https://jira.example.com and ticket creation will fail live"
-  else
-    pass "JIRA_BASE_URL=$JIRA_BASE_URL (project $JIRA_PROJECT_KEY)"
-  fi
+  "$PY" scripts/deploy_check.py opscenter
   "$PY" scripts/deploy_check.py bedrock
 }
 

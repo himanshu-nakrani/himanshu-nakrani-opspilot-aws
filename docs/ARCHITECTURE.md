@@ -14,7 +14,7 @@ sample-service (Lambda, Python)  ──logs──►  CloudWatch Logs
   ┌──────────────┬──────────────┬──────────────┬──────────────┬──────────────┬──────────────┐
   │ CollectCtx   │ RunRCA       │ Route        │ CreateTicket │ ProposeFix   │ Verify       │ Notify
   │ Lambda       │ Lambda →     │ Choice on    │ Lambda →     │ Lambda/      │ CodeBuild    │ Lambda →
-  │ Logs Insights│ Bedrock      │ classification│ Jira REST v3 │ Fargate →    │ (sync .sync) │ Slack webhook
+  │ Logs Insights│ Bedrock      │ classification│ SSM OpsCenter│ Fargate →    │ (sync .sync) │ Slack webhook
   │ + CodeCommit │ Converse +   │ + confidence │              │ Bedrock +    │ repro test   │ + SNS email
   │ (file/commits) │ toolUse JSON│              │              │ CodeCommit PR│ main vs fix  │
   └──────────────┴──────────────┴──────────────┴──────────────┴──────────────┴──────────────┘
@@ -87,17 +87,17 @@ AWS's modular foundation for running agents in production:
 | CollectContext | Lambda | Logs Insights query (±10 min), parse the top stack trace, map frames to repo files, last N commits on those files | `incident_event` → `context_bundle` |
 | RunRCA | Lambda + Bedrock Converse API | Tool-use loop (max 6 turns) with read-only tools: `query_logs`, `get_file`, `get_commit_diff`. Final answer forced through the `submit_rca` tool | `context_bundle` → `rca_result` |
 | Route | Step Functions Choice | `confidence < 0.6` or `insufficient_evidence` → ticket+notify only | `rca_result` |
-| CreateTicket | Lambda | Jira issue: summary, ADF description, labels `opspilot`, `cls:<classification>`, severity → priority | `rca_result` → `ticket_ref` |
-| ProposeFix | Lambda (Fargate if repo > 250 MB) | Shallow clone, Bedrock produces `{repro_test, patch}` as unified diffs, `git apply --check`, push `opspilot/<jira-key>`, open PR | `rca_result` + `ticket_ref` → `pr_ref` |
+| CreateTicket | Lambda | AWS Systems Manager OpsCenter OpsItem (IAM auth): title, Markdown RCA description, Source `OpsPilot`, severity sev1-4 → OpsCenter severity 1-4 and priority 1-4, searchable operational data `opspilot:incident_id` (idempotency). Ticket id/URL/severity/status and a timeline are mirrored into the DynamoDB incidents table | `rca_result` + execution input → `ticket_ref` |
+| ProposeFix | Lambda (Fargate if repo > 250 MB) | Shallow clone, Bedrock produces `{repro_test, patch}` as unified diffs, `git apply --check`, push `opspilot/<opsitem-id>`, open PR | `rca_result` + `ticket_ref` → `pr_ref` |
 | Verify | CodeBuild (`startBuild.sync`) | 1) repro test on base must FAIL; 2) full suite + repro test on fix branch must PASS | `pr_ref` → `verification_result` |
-| Notify | Lambda | Slack Block Kit message + SNS: classification, RCA summary, evidence, Jira link, PR link, verification verdict | all → message |
+| Notify | Lambda | Slack Block Kit message + SNS: classification, RCA summary, evidence, OpsItem link, PR link, verification verdict; mirrors the outcome onto the OpsItem (verified PR → InProgress, otherwise stays Open; never auto-Resolved) | all → message |
 
 ## Guardrails
 - **Structured output only.** Bedrock tool schemas mirror contracts/rca_output.schema.json. Validate in Lambda; one repair retry, then route to `insufficient_evidence`.
 - **Evidence grounding.** Each `evidence[].ref` must point to a log line ID or file:line that exists in the context bundle. Lambda checks this; unverifiable claims lower confidence to at most 0.4.
 - **Patch limits.** At most 3 files and 80 changed lines. No changes to CI config, IaC or dependency manifests. If a patch breaks the limits, still file the ticket and add a note, but open no PR.
 - **Retry cap.** If verification fails, ProposeFix runs one more time with the failure log. After that the PR is marked draft and a "needs human" label is added.
-- **Secrets.** Jira token and Slack webhook live in Secrets Manager. Source control is AWS CodeCommit, reached with each Lambda's IAM role (no Git token at all). Log payloads are redacted (emails, tokens, IPs) before any Bedrock call.
+- **Secrets.** Ticketing (OpsCenter) and source control need no secrets. The optional Slack webhook lives in Secrets Manager. Incident Manager is not used: AWS closed it to new customers on 2025-11-07. Source control is AWS CodeCommit, reached with each Lambda's IAM role (no Git token at all). Log payloads are redacted (emails, tokens, IPs) before any Bedrock call.
 - **Cost guard.** Max 1 RCA per alarm per 15 min; per-run token budget enforced in RunRCA.
 
 ## Observability of OpsPilot itself

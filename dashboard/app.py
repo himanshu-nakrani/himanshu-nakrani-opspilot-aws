@@ -4,7 +4,7 @@ Provides real-time visualization of:
 - Ingested incidents and deduplication status
 - Bedrock RCA confidence scores and grounded evidence
 - Suspected code locations and patch unified diffs
-- Jira issue links and CodeCommit PRs
+- AWS OpsCenter OpsItem links and CodeCommit PRs
 - Live trigger simulation and M6 evaluation benchmark results
 """
 
