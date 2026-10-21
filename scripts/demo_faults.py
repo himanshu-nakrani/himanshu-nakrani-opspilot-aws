@@ -77,7 +77,11 @@ def watch(alarm: str, minutes: int) -> None:
     machines = [m for m in sfn.list_state_machines()["stateMachines"] if "OpsPilot" in m["name"] or "opspilot" in m["name"]]
     machine = machines[0]["stateMachineArn"] if machines else None
     since = time.time()
-    last_state, seen = None, set()
+    # Executions that already exist belong to earlier runs: never report them as this run.
+    old = set()
+    if machine:
+        old = {e["executionArn"] for e in sfn.list_executions(stateMachineArn=machine, maxResults=50)["executions"]}
+    last_state, seen, matched = None, set(), {}
     print(f"\nWatching alarm {alarm} and OpsPilot executions for up to {minutes} min (Ctrl-C to stop)...")
     while time.time() - since < minutes * 60:
         state = cw.describe_alarms(AlarmNames=[alarm])["MetricAlarms"]
@@ -86,10 +90,16 @@ def watch(alarm: str, minutes: int) -> None:
             print(f"  [{time.strftime('%H:%M:%S')}] alarm {alarm}: {state}")
             last_state = state
         if machine:
-            for ex in sfn.list_executions(stateMachineArn=machine, maxResults=5)["executions"]:
-                if ex["startDate"].timestamp() < since - 60:
+            for ex in sfn.list_executions(stateMachineArn=machine, maxResults=10)["executions"]:
+                arn = ex["executionArn"]
+                if arn in old or ex["startDate"].timestamp() < since - 5:
                     continue
-                key = (ex["executionArn"], ex["status"])
+                if arn not in matched:  # only follow executions started by this alarm
+                    inp = sfn.describe_execution(executionArn=arn).get("input") or ""
+                    matched[arn] = alarm in inp
+                if not matched[arn]:
+                    continue
+                key = (arn, ex["status"])
                 if key not in seen:
                     seen.add(key)
                     print(f"  [{time.strftime('%H:%M:%S')}] execution {ex['name']}: {ex['status']}")

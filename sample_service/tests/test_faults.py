@@ -39,8 +39,10 @@ def test_checkout_valid_coupon_math():
     assert body["subtotal"] == 178.0 and body["discount"] == 35.6 and body["total"] == 142.4
 
 
+# CodeBuild runs this suite on every fix branch, so it must not pin a bug that the fix agent is
+# expected to repair. The orders repro target (/orders/999) is therefore not asserted here; its
+# traceback parsing is covered in tests/test_sample_service_traceback.py (OpsPilot suite).
 @pytest.mark.parametrize("path,component,error_type", [
-    ("/orders/999", "orders", "AttributeError"),
     ("/checkout?sku=SKU-1&coupon=SPRING50", "checkout", "KeyError"),
     ("/inventory/BULK-42", "inventory", "InventoryDbTimeout"),
 ])
@@ -50,16 +52,6 @@ def test_planted_errors_return_500_and_log_structured_event(path, component, err
     assert events and events[-1]["component"] == component and events[-1]["error_type"] == error_type
     # The plain traceback CollectContext parses must be in the log too.
     assert any("Traceback (most recent call last)" in r.getMessage() for r in caplog.records)
-
-
-def test_traceback_parses_to_sample_service_frame(caplog):
-    from opspilot.collect_context import parse_stack_trace_from_logs
-
-    client.get("/orders/999")
-    text = next(r.getMessage() for r in caplog.records if "Traceback" in r.getMessage())
-    info = parse_stack_trace_from_logs([text])
-    assert info is not None and info.error_type == "AttributeError"
-    assert info.top_frame.file.endswith("sample_service/app.py") and info.top_frame.function == "get_order"
 
 
 def test_legacy_gateway_is_slow_but_succeeds(monkeypatch):

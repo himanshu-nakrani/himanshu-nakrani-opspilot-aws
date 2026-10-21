@@ -92,7 +92,10 @@ class SampleServiceStack(Stack):
             metric = mf.metric(statistic="Sum", period=Duration.minutes(1))
             error_metrics[component] = metric
             self.alarms[component] = self._alarm(
-                f"{component.capitalize()}ErrorAlarm", alarm_name, metric, 1,
+                # Keep the original construct ID for orders so an already-deployed stack updates in place
+                # (its alarm name OpsPilotSampleServiceErrors is unchanged).
+                "SampleServiceErrorAlarm" if component == "orders" else f"{component.capitalize()}ErrorAlarm",
+                alarm_name, metric, 1,
                 f"Unhandled exceptions in the {component} component of the sample service",
             )
         # Back-compat handle for code that expects a single alarm.

@@ -68,16 +68,33 @@ def bedrock():
     s = session()
     model = os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL)
     base = model.split(".", 1)[1] if model.split(".", 1)[0] in ("us", "eu", "apac", "global") else model
+    br = s.client("bedrock")
     try:
-        s.client("bedrock").get_foundation_model(modelIdentifier=base)
-        print(f"  {GREEN}PASS{RESET} Bedrock model {model} exists in {region(s)}")
+        br.get_foundation_model(modelIdentifier=base)
     except ClientError as e:
         print(f"  {YELLOW}WARN{RESET} Bedrock model {model} not available in {region(s)} "
-              f"({e.response['Error']['Code']}). Enable model access in the Bedrock console or set BEDROCK_MODEL_ID; "
+              f"({e.response['Error']['Code']}). Set BEDROCK_MODEL_ID to a model offered there; "
               "RCA will fail at runtime until then.")
+        return
     except BotoCoreError as e:
         print(f"  {YELLOW}WARN{RESET} could not check Bedrock: {e}")
-
+        return
+    # Existence is not access: check that this account is actually authorized/entitled to call it.
+    try:
+        a = br.get_foundation_model_availability(modelId=base)
+    except (ClientError, BotoCoreError) as e:
+        print(f"  {YELLOW}WARN{RESET} Bedrock model {model} exists, but access could not be confirmed ({e}). "
+              "Check model access in the Bedrock console.")
+        return
+    problems = [f"{k}={a.get(k, {}).get('status') if isinstance(a.get(k), dict) else a.get(k)}"
+                for k in ("authorizationStatus", "entitlementAvailability", "agreementAvailability", "regionAvailability")
+                if (a.get(k, {}).get("status") if isinstance(a.get(k), dict) else a.get(k))
+                not in (None, "AUTHORIZED", "AVAILABLE", "NOT_APPLICABLE")]
+    if problems:
+        print(f"  {YELLOW}WARN{RESET} Bedrock model {model} exists but is not usable by this account "
+              f"({', '.join(problems)}). Enable model access in the Bedrock console; RCA will fail until then.")
+    else:
+        print(f"  {GREEN}PASS{RESET} Bedrock model {model} is enabled for this account in {region(s)}")
 
 def _put(sm, name, value):
     sm.put_secret_value(SecretId=name, SecretString=value)
@@ -196,8 +213,10 @@ def verify():
                 time.sleep(3)
         try:
             code, body = http_get(url + "/faults")
-            n = len(json.loads(body)) if body.strip().startswith(("[", "{")) else 0
-            (ok if code == 200 else bad)(f"GET /faults -> {code} ({n} entries)")
+            data = json.loads(body) if body.strip().startswith(("[", "{")) else {}
+            faults = data.get("faults", []) if isinstance(data, dict) else data
+            n = len(faults) if isinstance(faults, (list, dict)) else 0
+            (ok if code == 200 and n else bad)(f"GET /faults -> {code} ({n} planted faults)")
         except Exception as e:  # noqa: BLE001
             bad(f"GET /faults failed: {e}")
         print(f"\n  Service URL: {url}")
