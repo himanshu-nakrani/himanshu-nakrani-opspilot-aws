@@ -27,6 +27,11 @@ export const App: React.FC = () => {
     setOverlay({ kind: 'incident', incident: newIncident });
   };
 
+  const handleBatchComplete = (incidents: Incident[]) => {
+    incidents.forEach((i) => data.upsertIncident(i));
+    data.reloadStats();
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-ink-950">
       <a
@@ -105,6 +110,7 @@ export const App: React.FC = () => {
         isOpen={overlay?.kind === 'trigger'}
         onClose={close}
         onSimulationSuccess={handleSimulationSuccess}
+        onBatchComplete={handleBatchComplete}
       />
       <EvalsModal isOpen={overlay?.kind === 'evals'} onClose={close} />
       <AgentCoreDrawer isOpen={overlay?.kind === 'agentcore'} onClose={close} stats={data.stats} />
