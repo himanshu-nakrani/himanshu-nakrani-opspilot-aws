@@ -21,7 +21,8 @@ from aws_cdk import (
 from constructs import Construct
 
 from infra.core_stack import CoreStack
-from infra.sample_service_stack import SampleServiceStack
+from infra.bundling import python_lambda_code
+from infra.sample_service_stack import ALARM_PREFIX, SampleServiceStack
 
 
 class PipelineStack(Stack):
@@ -63,17 +64,11 @@ class PipelineStack(Stack):
         # installed into the package root. Without this, the functions import-fail at
         # cold start (pydantic, httpx, strands-agents are not in the Lambda runtime).
         repo_root = str(Path(__file__).resolve().parent.parent)
-        lambda_code = lambda_.Code.from_asset(
+        lambda_code = python_lambda_code(
             repo_root,
-            exclude=["*", "!src", "!src/**", "!requirements-lambda.txt"],
-            bundling=cdk.BundlingOptions(
-                image=lambda_.Runtime.PYTHON_3_12.bundling_image,
-                command=[
-                    "bash", "-c",
-                    "pip install --no-cache-dir -r requirements-lambda.txt -t /asset-output "
-                    "&& cp -r src/opspilot /asset-output/opspilot",
-                ],
-            ),
+            requirements="requirements-lambda.txt",
+            copies=[("src/opspilot", "opspilot")],
+            include=["src"],
         )
 
         # 1. CollectContext Function
@@ -266,7 +261,8 @@ class PipelineStack(Stack):
                 source=["aws.cloudwatch"],
                 detail_type=["CloudWatch Alarm State Change"],
                 detail={
-                    "alarmName": [sample_service_stack.alarm.alarm_name],
+                    # Every sample-service alarm (one per planted fault) shares this prefix.
+                    "alarmName": [{"prefix": ALARM_PREFIX}],
                     "state": {
                         "value": ["ALARM"],
                     },
