@@ -191,6 +191,21 @@ def list_scenarios() -> List[Dict[str, Any]]:
     ]
 
 
+def simulation_alarm_name(scenario_id: str) -> str:
+    """Alarm identity sent to ingest for a simulated scenario.
+
+    Ingest dedupes on sha256(alarm_name + 15-minute window), and several scenarios share a
+    CloudWatch alarm name. Synthetic scenarios get a per-scenario suffix so two different
+    scenarios in the same window are separate incidents, while repeat runs of the same
+    scenario still dedupe. The live-probe scenario keeps the real alarm name, so it dedupes
+    with the alarm CloudWatch would raise for the same traffic.
+    """
+    sc = SCENARIOS[scenario_id]
+    if sc.get("probe_path"):
+        return sc["alarm_name"]
+    return f"{sc['alarm_name']}-sim-{scenario_id}"
+
+
 def expected_status(s: Dict[str, Any]) -> str:
     """Mirror opspilot.route.route_rca for the canned RCA."""
     loc: Optional[Dict[str, Any]] = s.get("suspected_location")

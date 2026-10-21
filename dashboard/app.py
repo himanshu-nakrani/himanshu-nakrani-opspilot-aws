@@ -32,7 +32,13 @@ from opspilot.ingest import handle_alarm_event
 from opspilot.rca.agent import run_rca_agent
 from opspilot.route import route_rca
 from sample_service.app import app as sample_app
-from dashboard.scenarios import DEFAULT_SCENARIO, SCENARIOS, expected_status, list_scenarios
+from dashboard.scenarios import (
+    DEFAULT_SCENARIO,
+    SCENARIOS,
+    expected_status,
+    list_scenarios,
+    simulation_alarm_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -280,12 +286,13 @@ def trigger_incident_simulation(body: Optional[TriggerRequest] = None) -> Dict[s
                 failed_calls += 1
 
     now = datetime.now(timezone.utc).isoformat()
+    alarm_name = simulation_alarm_name(scenario_id)
     alarm_event = {
         "source": "aws.cloudwatch",
         "detail-type": "CloudWatch Alarm State Change",
         "time": now,
         "detail": {
-            "alarmName": sc["alarm_name"],
+            "alarmName": alarm_name,
             "state": {
                 "value": "ALARM",
                 "timestamp": now,
@@ -313,7 +320,7 @@ def trigger_incident_simulation(body: Optional[TriggerRequest] = None) -> Dict[s
     new_inc = {
         "incident_id": inc_id,
         "service": "sample-service",
-        "alarm_name": sc["alarm_name"],
+        "alarm_name": alarm_name,
         "detected_at": now,
         "status": "DUPLICATE_SKIPPED" if duplicate else outcome,
         "classification": sc["classification"],
