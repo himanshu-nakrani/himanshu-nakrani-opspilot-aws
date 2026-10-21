@@ -41,13 +41,13 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
   const inc = result?.incident;
   const footer = (
     <>
-      <span className="text-xs text-slate-400">Demo only: the RCA shown is a canned example and no real ticket or PR is created.</span>
+      <span className="text-xs text-ink-400">Demo only: the RCA shown is a canned example and no real ticket or PR is created.</span>
       <div className="flex gap-2">
         {phase === 'done' && inc ? (
           <button
             type="button"
             onClick={() => onSimulationSuccess(inc)}
-            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/40"
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-signal-500/15 hover:bg-signal-500/25 text-signal-200 border border-signal-500/40"
           >
             View incident
           </button>
@@ -81,9 +81,9 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
       footer={footer}
     >
       <div aria-live="polite" className="space-y-3">
-        {phase === 'idle' && <p className="text-sm text-slate-300">Nothing has been sent yet.</p>}
+        {phase === 'idle' && <p className="text-sm text-ink-300">Nothing has been sent yet.</p>}
         {phase === 'running' && (
-          <p role="status" className="text-sm text-slate-300">
+          <p role="status" className="text-sm text-ink-300">
             Calling the sample service and ingesting the alarm…
           </p>
         )}
@@ -94,19 +94,19 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
           </p>
         )}
         {phase === 'done' && result && inc && (
-          <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-2 text-xs font-mono bg-slate-950 border border-slate-800 rounded-xl p-4">
-            <dt className="text-slate-400">5xx responses</dt>
-            <dd className="text-slate-200">{result.failed_calls} / 5</dd>
-            <dt className="text-slate-400">Ingest</dt>
-            <dd className="text-slate-200">
+          <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-2 text-xs font-mono bg-ink-950 border border-ink-800 rounded-lg p-4">
+            <dt className="text-ink-400">5xx responses</dt>
+            <dd className="text-ink-200">{result.failed_calls} / 5</dd>
+            <dt className="text-ink-400">Ingest</dt>
+            <dd className="text-ink-200">
               {result.ingest_status} ({result.ingest_mode === 'offline' ? 'offline, no AWS credentials' : 'live'})
             </dd>
-            <dt className="text-slate-400">Incident</dt>
-            <dd className="text-slate-200 break-all">{result.incident_id}</dd>
-            <dt className="text-slate-400">Status</dt>
-            <dd className="text-slate-200">{inc.status}</dd>
-            <dt className="text-slate-400">Summary</dt>
-            <dd className="text-slate-200 font-sans">{result.summary}</dd>
+            <dt className="text-ink-400">Incident</dt>
+            <dd className="text-ink-200 break-all">{result.incident_id}</dd>
+            <dt className="text-ink-400">Status</dt>
+            <dd className="text-ink-200">{inc.status}</dd>
+            <dt className="text-ink-400">Summary</dt>
+            <dd className="text-ink-200 font-sans">{result.summary}</dd>
           </dl>
         )}
       </div>

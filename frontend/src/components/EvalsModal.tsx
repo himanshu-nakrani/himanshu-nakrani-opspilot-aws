@@ -46,17 +46,17 @@ export const EvalsModal: React.FC<EvalsModalProps> = ({ isOpen, onClose }) => {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      icon={<FlaskConical className="w-5 h-5 text-sky-400 mt-0.5" aria-hidden="true" />}
+      icon={<FlaskConical className="w-5 h-5 text-ink-300 mt-0.5" aria-hidden="true" />}
       title="M6 benchmark evals"
       description="Replays the golden fixtures through the RCA agent and router."
       footer={
         <>
-          <span className="text-xs text-slate-400">Results come from the offline scripted model, not a live Bedrock run.</span>
+          <span className="text-xs text-ink-400">Results come from the offline scripted model, not a live Bedrock run.</span>
           <button
             type="button"
             onClick={run}
             disabled={isLoading}
-            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 disabled:opacity-60 flex items-center gap-1.5"
+            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-ink-800 hover:bg-ink-700 text-ink-100 border border-ink-700 disabled:opacity-60 flex items-center gap-1.5"
           >
             <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
             Re-run
@@ -66,7 +66,7 @@ export const EvalsModal: React.FC<EvalsModalProps> = ({ isOpen, onClose }) => {
     >
       <div aria-live="polite">
         {isLoading && (
-          <p role="status" className="flex items-center gap-2 text-sm text-slate-300">
+          <p role="status" className="flex items-center gap-2 text-sm text-ink-300">
             <Loader2 className="w-4 h-4 motion-safe:animate-spin" aria-hidden="true" />
             Running fixtures…
           </p>
@@ -90,10 +90,10 @@ export const EvalsModal: React.FC<EvalsModalProps> = ({ isOpen, onClose }) => {
 const Metric: React.FC<{ label: string; value: number; target?: number; detail: string }> = ({ label, value, target, detail }) => {
   const met = target === undefined ? null : value >= target;
   return (
-    <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-800">
-      <h3 className="text-xs uppercase tracking-wider text-slate-300">{label}</h3>
-      <p className={`text-2xl font-bold mt-1 ${met === false ? 'text-red-300' : 'text-white'}`}>{formatPercent(round1(value))}</p>
-      <p className="text-xs text-slate-400 mt-1">
+    <div className="p-4 rounded-lg bg-ink-950/50 border border-ink-800">
+      <h3 className="text-xs uppercase tracking-wider text-ink-300">{label}</h3>
+      <p className={`text-2xl font-bold mt-1 ${met === false ? 'text-red-300' : 'text-ink-50'}`}>{formatPercent(round1(value))}</p>
+      <p className="text-xs text-ink-400 mt-1">
         {detail}
         {target !== undefined && ` · target ≥ ${target}%`}
       </p>
@@ -108,9 +108,9 @@ export const EvalsReportView: React.FC<{ report: EvalsReport }> = ({ report }) =
   return (
     <div className="space-y-6">
       <div
-        className={`flex flex-wrap items-center gap-3 p-3 rounded-xl border text-sm ${
+        className={`flex flex-wrap items-center gap-3 p-3 rounded-lg border text-sm ${
           report.all_targets_passed
-            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
+            ? 'bg-ok-500/10 border-ok-500/30 text-ok-300'
             : 'bg-red-500/10 border-red-500/30 text-red-200'
         }`}
       >
@@ -155,10 +155,10 @@ export const EvalsReportView: React.FC<{ report: EvalsReport }> = ({ report }) =
         />
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-slate-800">
+      <div className="overflow-x-auto rounded-lg border border-ink-800">
         <table className="w-full text-xs">
           <caption className="sr-only">Per-fixture results</caption>
-          <thead className="bg-slate-900 text-slate-300 text-left">
+          <thead className="bg-ink-900 text-ink-300 text-left">
             <tr>
               <th scope="col" className="p-2.5 font-semibold">Fixture</th>
               <th scope="col" className="p-2.5 font-semibold">Expected</th>
@@ -169,12 +169,12 @@ export const EvalsReportView: React.FC<{ report: EvalsReport }> = ({ report }) =
               <th scope="col" className="p-2.5 font-semibold">Result</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-ink-800">
             {report.details.map((d) => (
-              <tr key={d.id} className="text-slate-200">
+              <tr key={d.id} className="text-ink-200">
                 <th scope="row" className="p-2.5 font-normal text-left">
                   <span className="block">{d.name}</span>
-                  <span className="block font-mono text-slate-400">{d.id}</span>
+                  <span className="block font-mono text-ink-400">{d.id}</span>
                 </th>
                 <td className="p-2.5">{humanize(d.gold_classification)}</td>
                 <td className={`p-2.5 ${d.predicted_classification === d.gold_classification ? '' : 'text-red-300'}`}>
@@ -182,13 +182,13 @@ export const EvalsReportView: React.FC<{ report: EvalsReport }> = ({ report }) =
                 </td>
                 <td className={`p-2.5 font-mono ${d.predicted_route === d.gold_route ? '' : 'text-red-300'}`}>
                   {d.predicted_route}
-                  {d.predicted_route !== d.gold_route && <span className="text-slate-400"> (expected {d.gold_route})</span>}
+                  {d.predicted_route !== d.gold_route && <span className="text-ink-400"> (expected {d.gold_route})</span>}
                 </td>
                 <td className="p-2.5 text-right font-mono">{Math.round(d.confidence * 100)}%</td>
                 <td className="p-2.5 text-right font-mono">{d.latency_ms.toFixed(1)} ms</td>
                 <td className="p-2.5">
                   {d.passed ? (
-                    <span className="inline-flex items-center gap-1 text-emerald-300">
+                    <span className="inline-flex items-center gap-1 text-ok-300">
                       <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Pass
                     </span>
                   ) : (

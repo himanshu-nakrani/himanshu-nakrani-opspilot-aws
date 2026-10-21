@@ -1,93 +1,94 @@
 import React from 'react';
 import { Stats } from '../types';
-import { AlertCircle, Target, GitPullRequest, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { formatRatio } from '../lib/format';
+import { eyebrow } from '../ui/styles';
 
 interface StatsCardsProps {
   stats: Stats | null;
-  onOpenAgentCore: () => void;
 }
 
-const card = 'bg-slate-900/50 border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between transition';
-
-const StatCard: React.FC<{
+const Cell: React.FC<{
   label: string;
   value: React.ReactNode;
-  valueClass: string;
-  icon: React.ReactNode;
+  unit?: string;
   footnote: React.ReactNode;
-}> = ({ label, value, valueClass, icon, footnote }) => (
-  <div className={`${card} hover:border-slate-700`}>
-    <div>
-      <div className="flex items-center justify-between text-slate-300">
-        <h3 className="text-xs font-semibold uppercase tracking-wider">{label}</h3>
-        {icon}
+  emphasis?: boolean;
+  meter?: number | null;
+  index: number;
+}> = ({ label, value, unit, footnote, emphasis, meter, index }) => (
+  <div
+    className="px-4 sm:px-5 py-4 motion-safe:animate-rise-in"
+    style={{ animationDelay: `${40 + index * index * 12 + index * 30}ms` }}
+  >
+    <dt className={eyebrow}>{label}</dt>
+    <dd className="mt-2">
+      <span
+        className={`tnum text-[32px] leading-none font-light tracking-[-0.04em] ${
+          emphasis ? 'text-ok-300' : 'text-ink-50'
+        }`}
+      >
+        {value}
+      </span>
+      {unit && <span className="ml-1 text-xs text-ink-400">{unit}</span>}
+    </dd>
+    {meter !== undefined && (
+      <div className="mt-3 h-[3px] bg-ink-800 rounded-sm overflow-hidden" aria-hidden="true">
+        <div
+          className={`h-full ${emphasis ? 'bg-ok-400' : 'bg-ink-300'}`}
+          style={{ width: `${Math.max(0, Math.min(1, meter ?? 0)) * 100}%` }}
+        />
       </div>
-      <div className={`text-2xl font-bold mt-2 ${valueClass}`}>{value}</div>
-    </div>
-    <p className="text-xs text-slate-400 mt-2">{footnote}</p>
+    )}
+    <p className="mt-2 text-2xs text-ink-300">{footnote}</p>
   </div>
 );
 
-export const StatsCards: React.FC<StatsCardsProps> = ({ stats, onOpenAgentCore }) => {
-  const policyCount = stats?.agentcore_policies_active.length;
+/** Key metrics as one instrument strip rather than a row of identical cards. */
+export const StatsCards: React.FC<StatsCardsProps> = ({ stats }) => {
   const verifyFootnote = !stats
     ? 'Loading…'
     : stats.verification_pass_rate === null
       ? 'No fix PRs yet'
       : `${stats.verified_prs} of ${stats.total_prs_opened} fix PRs verified`;
 
-  return (
-    <section aria-label="Key metrics" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-      <StatCard
-        label="Total Incidents"
-        value={stats ? stats.total_incidents : '--'}
-        valueClass="text-white"
-        icon={<AlertCircle className="w-4 h-4 text-slate-400" aria-hidden="true" />}
-        footnote="Dedup window: 15 min"
-      />
-      <StatCard
-        label="Mean RCA Confidence"
-        value={stats ? formatRatio(stats.mean_confidence) : '--'}
-        valueClass="text-emerald-400"
-        icon={<Target className="w-4 h-4 text-emerald-400" aria-hidden="true" />}
-        footnote="Fix route requires ≥ 0.60"
-      />
-      <StatCard
-        label="Fix PRs Opened"
-        value={stats ? stats.total_prs_opened : '--'}
-        valueClass="text-purple-300"
-        icon={<GitPullRequest className="w-4 h-4 text-purple-400" aria-hidden="true" />}
-        footnote="opspilot/* branches"
-      />
-      <StatCard
-        label="Verification Pass Rate"
-        value={stats ? formatRatio(stats.verification_pass_rate) : '--'}
-        valueClass="text-sky-300"
-        icon={<CheckCircle2 className="w-4 h-4 text-sky-400" aria-hidden="true" />}
-        footnote={verifyFootnote}
-      />
+  const pct = (v: number | null | undefined) => {
+    const s = formatRatio(v);
+    return s.endsWith('%') ? s.slice(0, -1) : s;
+  };
 
-      <button
-        type="button"
-        onClick={onOpenAgentCore}
-        className={`${card} text-left bg-gradient-to-br from-purple-950/20 to-slate-900/50 border-purple-500/20 hover:border-purple-500/40 group focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-400`}
-      >
-        <div className="w-full">
-          <div className="flex items-center justify-between text-purple-200">
-            <span className="text-xs font-semibold uppercase tracking-wider">Agent Framework</span>
-            <ShieldCheck className="w-4 h-4 text-purple-400" aria-hidden="true" />
-          </div>
-          <div className="text-sm font-bold text-purple-100 mt-2 leading-tight">
-            {stats?.agent_framework ?? 'Strands + AgentCore'}
-          </div>
-        </div>
-        <span className="flex items-center gap-1.5 text-xs text-purple-300 mt-2">
-          <span>{policyCount === undefined ? '…' : `${policyCount} policies`}</span>
-          <span aria-hidden="true">•</span>
-          <span className="underline decoration-dotted">Inspect details</span>
-        </span>
-      </button>
+  return (
+    <section aria-label="Key metrics" className="rounded-lg border border-ink-800 bg-ink-900/60">
+      <dl className="grid grid-cols-2 lg:grid-cols-4 [&>*]:border-ink-800 [&>*:nth-child(odd)]:border-r lg:[&>*]:border-r lg:[&>*:last-child]:border-r-0 [&>*:nth-child(-n+2)]:border-b lg:[&>*]:border-b-0">
+        <Cell
+          index={0}
+          label="Incidents"
+          value={stats ? stats.total_incidents : '—'}
+          footnote="Dedup window 15 min"
+        />
+        <Cell
+          index={1}
+          label="Mean RCA confidence"
+          value={stats ? pct(stats.mean_confidence) : '—'}
+          unit={stats && stats.mean_confidence !== null ? '%' : undefined}
+          meter={stats ? stats.mean_confidence : null}
+          footnote="Fix route requires ≥ 0.60"
+        />
+        <Cell
+          index={2}
+          label="Fix PRs opened"
+          value={stats ? stats.total_prs_opened : '—'}
+          footnote={<span className="font-mono">opspilot/* branches</span>}
+        />
+        <Cell
+          index={3}
+          label="Verification pass rate"
+          value={stats ? pct(stats.verification_pass_rate) : '—'}
+          unit={stats && stats.verification_pass_rate !== null ? '%' : undefined}
+          meter={stats ? stats.verification_pass_rate : null}
+          footnote={verifyFootnote}
+        />
+
+      </dl>
     </section>
   );
 };
