@@ -31,9 +31,7 @@ export const ArchitectureBanner: React.FC = () => (
             {!last && <span className="absolute left-[11px] top-6 bottom-0 w-px bg-ink-800" aria-hidden="true" />}
             <span
               className={`relative z-10 w-6 h-6 shrink-0 rounded-md border flex items-center justify-center font-mono text-2xs tnum ${
-                idx === 3
-                  ? 'border-signal-400/50 bg-signal-400/10 text-signal-300'
-                  : 'border-ink-700 bg-ink-900 text-ink-300'
+                'border-ink-700 bg-ink-900 text-ink-400'
               }`}
               aria-hidden="true"
             >
@@ -41,7 +39,7 @@ export const ArchitectureBanner: React.FC = () => (
             </span>
             <div className="min-w-0 pt-[3px] flex flex-1 items-baseline justify-between gap-2">
               <span className="text-[13px] text-ink-100 leading-tight">{step.title}</span>
-              <span className="text-2xs text-ink-500 text-right">{step.detail}</span>
+              <span className="font-mono text-2xs text-ink-400 text-right">{step.detail}</span>
             </div>
           </li>
         );

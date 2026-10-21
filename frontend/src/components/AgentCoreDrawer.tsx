@@ -57,7 +57,7 @@ export const AgentCoreDrawer: React.FC<AgentCoreDrawerProps> = ({ isOpen, onClos
 
         <section>
           <h3 className={h3}>
-            <Wrench className="w-3.5 h-3.5 text-signal-400" aria-hidden="true" />
+            <Wrench className="w-3.5 h-3.5 text-ink-400" aria-hidden="true" />
             Gateway tools ({stats.agentcore_gateway_tools.length})
           </h3>
           <ul className="space-y-1.5">
@@ -72,7 +72,7 @@ export const AgentCoreDrawer: React.FC<AgentCoreDrawerProps> = ({ isOpen, onClos
 
         <section>
           <h3 className={h3}>
-            <Shield className="w-3.5 h-3.5 text-signal-400" aria-hidden="true" />
+            <Shield className="w-3.5 h-3.5 text-ink-400" aria-hidden="true" />
             Policies ({stats.agentcore_policies_active.length})
           </h3>
           <ul className="space-y-1.5">

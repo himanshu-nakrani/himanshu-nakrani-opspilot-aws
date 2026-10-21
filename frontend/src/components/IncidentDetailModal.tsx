@@ -15,7 +15,7 @@ const sectionTitle = 'text-xs font-semibold uppercase tracking-wider text-ink-30
 
 function diffLineClass(line: string): string {
   if (line.startsWith('+++') || line.startsWith('---')) return 'text-ink-300 font-semibold';
-  if (line.startsWith('+')) return 'text-signal-300 bg-signal-500/10';
+  if (line.startsWith('+')) return 'text-ok-300 bg-ok-500/10';
   if (line.startsWith('-')) return 'text-red-300 bg-red-500/10';
   if (line.startsWith('@@')) return 'text-sky-300';
   return 'text-ink-300';

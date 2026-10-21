@@ -20,7 +20,7 @@
   }
 
   ::selection {
-    @apply bg-signal-400 text-ink-950;
+    @apply bg-signal-500/40 text-ink-50;
   }
 
   :focus-visible {
@@ -41,13 +41,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Faint engineering-paper grid behind the workspace; texture, not decoration. */
-  .bg-grid {
-    background-image:
-      linear-gradient(to right, rgb(244 243 238 / 0.025) 1px, transparent 1px),
-      linear-gradient(to bottom, rgb(244 243 238 / 0.025) 1px, transparent 1px);
-    background-size: 24px 24px;
-  }
 }
 
 ::-webkit-scrollbar {

@@ -18,11 +18,11 @@ interface HeaderProps {
 /** Heartbeat glyph used as the product mark (matches the favicon). */
 const Mark: React.FC = () => (
   <svg viewBox="0 0 100 100" className="w-7 h-7 shrink-0" aria-hidden="true">
-    <rect width="100" height="100" rx="18" className="fill-ink-800" />
+    <rect width="100" height="100" rx="22" className="fill-ink-50" />
     <path
       d="M14 56h18l8-22 14 40 10-26 6 8h16"
       fill="none"
-      className="stroke-signal-400"
+      className="stroke-ink-950"
       strokeWidth="9"
       strokeLinejoin="round"
       strokeLinecap="round"
@@ -49,7 +49,7 @@ export const Header: React.FC<HeaderProps> = ({
       : 'Paused';
 
   return (
-    <header className="sticky top-0 z-30 border-b border-ink-800 bg-ink-950">
+    <header className="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/95 supports-[backdrop-filter]:bg-ink-950/85 supports-[backdrop-filter]:backdrop-blur">
       <div className="px-4 sm:px-6 h-14 flex items-center gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
           <Mark />
@@ -58,7 +58,7 @@ export const Header: React.FC<HeaderProps> = ({
           </h1>
           <span className="hidden sm:inline text-ink-600" aria-hidden="true">/</span>
           <span className="hidden sm:inline text-[13px] text-ink-300 truncate">Incident console</span>
-          <span className="hidden md:inline px-1.5 py-px rounded border border-ink-700 font-mono text-2xs text-ink-300">
+          <span className="hidden md:inline px-1.5 py-px rounded border border-ink-800 font-mono text-2xs text-ink-400">
             AWS POC
           </span>
         </div>
@@ -82,7 +82,7 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="relative flex w-2 h-2" aria-hidden="true">
               <span
                 className={`w-2 h-2 rounded-full ${
-                  hasError ? 'bg-red-400' : live ? 'bg-signal-400 motion-safe:animate-pulse-dot' : 'bg-ink-500'
+                  hasError ? 'bg-red-400' : live ? 'bg-ok-400 motion-safe:animate-pulse-dot' : 'bg-ink-500'
                 }`}
               />
             </span>
@@ -103,7 +103,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Refresh incidents and stats"
             className={btn.ghost}
           >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'motion-safe:animate-spin text-signal-400' : ''}`} aria-hidden="true" />
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'motion-safe:animate-spin text-ink-50' : ''}`} aria-hidden="true" />
           </button>
 
           <span className="hidden sm:block w-px h-5 bg-ink-800 mx-1" aria-hidden="true" />
@@ -132,10 +132,10 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={onTriggerSimulation}
-            className={btn.primary}
+            className={btn.secondary}
             title="Send 5 failing requests to sample_service and ingest the resulting alarm (simulated)"
           >
-            <Play className="w-3.5 h-3.5" aria-hidden="true" />
+            <Play className="w-3.5 h-3.5 text-ink-300" aria-hidden="true" />
             <span className="hidden sm:inline">Simulate incident</span>
             <span className="sm:hidden">Simulate</span>
           </button>

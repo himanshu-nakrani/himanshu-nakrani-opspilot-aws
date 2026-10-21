@@ -46,7 +46,7 @@ export const EvalsModal: React.FC<EvalsModalProps> = ({ isOpen, onClose }) => {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      icon={<FlaskConical className="w-5 h-5 text-signal-400 mt-0.5" aria-hidden="true" />}
+      icon={<FlaskConical className="w-5 h-5 text-ink-300 mt-0.5" aria-hidden="true" />}
       title="M6 benchmark evals"
       description="Replays the golden fixtures through the RCA agent and router."
       footer={
@@ -110,7 +110,7 @@ export const EvalsReportView: React.FC<{ report: EvalsReport }> = ({ report }) =
       <div
         className={`flex flex-wrap items-center gap-3 p-3 rounded-lg border text-sm ${
           report.all_targets_passed
-            ? 'bg-signal-500/10 border-signal-500/30 text-signal-200'
+            ? 'bg-ok-500/10 border-ok-500/30 text-ok-300'
             : 'bg-red-500/10 border-red-500/30 text-red-200'
         }`}
       >
@@ -188,7 +188,7 @@ export const EvalsReportView: React.FC<{ report: EvalsReport }> = ({ report }) =
                 <td className="p-2.5 text-right font-mono">{d.latency_ms.toFixed(1)} ms</td>
                 <td className="p-2.5">
                   {d.passed ? (
-                    <span className="inline-flex items-center gap-1 text-signal-300">
+                    <span className="inline-flex items-center gap-1 text-ok-300">
                       <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Pass
                     </span>
                   ) : (

@@ -28,10 +28,10 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-ink-950 bg-grid">
+    <div className="min-h-screen flex flex-col bg-ink-950">
       <a
         href="#incident-stream-heading"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-2 focus:rounded-md focus:bg-signal-400 focus:text-ink-950 focus:text-xs"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-2 focus:rounded-md focus:bg-ink-50 focus:text-ink-950 focus:text-xs"
       >
         Skip to incidents
       </a>
@@ -49,16 +49,16 @@ export const App: React.FC = () => {
       />
 
       <main className="flex-1 w-full max-w-[1440px] mx-auto px-4 sm:px-6 py-6 space-y-6">
-        <StatsCards stats={data.stats} onOpenAgentCore={() => setOverlay({ kind: 'agentcore' })} />
+        <StatsCards stats={data.stats} />
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] items-start">
           <section aria-labelledby="incident-stream-heading" className="min-w-0 space-y-3">
             <div className="flex items-baseline justify-between gap-3">
               <div>
-                <h2 id="incident-stream-heading" tabIndex={-1} className="text-xl font-semibold tracking-[-0.025em] text-ink-50 focus:outline-none">
+                <h2 id="incident-stream-heading" tabIndex={-1} className="text-[15px] font-semibold tracking-[-0.015em] text-ink-50 focus:outline-none">
                   Incident stream
                 </h2>
-                <p className="text-xs text-ink-400">Deduplicated alarms, each analysed with cited evidence. Select one for the full audit trail.</p>
+                <p className="mt-0.5 text-xs text-ink-400">Deduplicated alarms with cited evidence. Open one for the full audit trail.</p>
               </div>
             </div>
 
@@ -73,18 +73,32 @@ export const App: React.FC = () => {
             />
           </section>
 
-          <aside className="xl:sticky xl:top-20 grid gap-6 sm:grid-cols-2 xl:grid-cols-1 rounded-lg border border-ink-800 bg-ink-900 p-5 [&>*+*]:sm:border-l [&>*+*]:sm:pl-6 [&>*+*]:xl:border-l-0 [&>*+*]:xl:pl-0 [&>*+*]:xl:border-t [&>*+*]:xl:pt-6 [&>*+*]:border-ink-800 [&>*+*]:border-t [&>*+*]:pt-6 [&>*+*]:sm:border-t-0 [&>*+*]:sm:pt-0">
+          <aside className="grid gap-6 sm:grid-cols-2 xl:grid-cols-1 rounded-lg border border-ink-800 bg-ink-900/60 p-5 [&>*+*]:sm:border-l [&>*+*]:sm:pl-6 [&>*+*]:xl:border-l-0 [&>*+*]:xl:pl-0 [&>*+*]:xl:border-t [&>*+*]:xl:pt-6 [&>*+*]:border-ink-800 [&>*+*]:border-t [&>*+*]:pt-6 [&>*+*]:sm:border-t-0 [&>*+*]:sm:pt-0">
             <IncidentBreakdown incidents={data.incidents} activeClass={filterClass} onSelectClass={setFilterClass} />
             <ArchitectureBanner />
           </aside>
         </div>
       </main>
 
-      <footer className="border-t border-ink-800 px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-2 text-2xs text-ink-500">
-        <p>OpsPilot — autonomous SRE monitoring &amp; remediation agent · proof of concept</p>
-        <p className="font-mono">
-          Press <kbd className="px-1 rounded border border-ink-700 text-ink-400">/</kbd> to search
-        </p>
+      <footer className="border-t border-ink-800 bg-ink-950">
+        <div className="px-4 sm:px-6 h-9 flex items-center gap-4 font-mono text-2xs text-ink-400 overflow-x-auto whitespace-nowrap [scrollbar-width:none]">
+          <button
+            type="button"
+            onClick={() => setOverlay({ kind: 'agentcore' })}
+            className="inline-flex items-center gap-1.5 hover:text-ink-100 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal-400 rounded-sm"
+            title="Inspect Strands SDK and AgentCore configuration"
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${data.stats?.strands_sdk_version ? 'bg-ok-400' : 'bg-ink-600'}`} aria-hidden="true" />
+            Strands {data.stats?.strands_sdk_version ?? '…'}
+          </button>
+          <span className="text-ink-700" aria-hidden="true">|</span>
+          <span>AgentCore</span>
+          <span className="tnum">{data.stats ? `${data.stats.agentcore_policies_active.length} policies` : '…'}</span>
+          <span className="tnum">{data.stats ? `${data.stats.agentcore_gateway_tools.length} gateway tools` : '…'}</span>
+          <span className="ml-auto hidden sm:inline text-ink-500">
+            OpsPilot · proof of concept · <kbd className="px-1 rounded-sm border border-ink-700 text-ink-300">/</kbd> search
+          </span>
+        </div>
       </footer>
 
       <IncidentDetailModal incident={overlay?.kind === 'incident' ? overlay.incident : null} onClose={close} />

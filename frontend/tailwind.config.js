@@ -8,29 +8,35 @@ export default {
         mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
       },
       colors: {
-        // Warm graphite neutrals: tinted toward the signal hue, never pure grey.
+        // Cool graphite neutrals with a faint blue cast. No pure greys, no pure black.
         ink: {
-          50: '#f4f3ee',
-          100: '#e7e5dc',
-          200: '#d0cdc0',
-          300: '#b3b0a2',
-          400: '#908d80',
-          500: '#6e6c61',
-          600: '#525047',
-          700: '#3b3a34',
-          800: '#2b2a26',
-          850: '#22211e',
-          900: '#1a1a17',
-          950: '#121210',
+          50: '#f3f4f6',
+          100: '#e3e5e9',
+          200: '#c7cad1',
+          300: '#a3a8b2',
+          400: '#848a96',
+          500: '#636976',
+          600: '#4a4f5a',
+          700: '#363a43',
+          800: '#272a31',
+          850: '#1e2127',
+          900: '#17191e',
+          950: '#0e0f12',
         },
-        // Control-room signal accent (yellow-green, hue ~75deg).
+        // Interaction accent: focus, selection, active filter. Never used for status.
         signal: {
-          200: '#eef8b8',
-          300: '#e1f28a',
-          400: '#d2ea5c',
-          500: '#bcd630',
-          600: '#98ad1f',
-          700: '#6f7f16',
+          200: '#d6e2ff',
+          300: '#b3c8ff',
+          400: '#8eabff',
+          500: '#6d8df5',
+          600: '#5371dc',
+          700: '#3e58b0',
+        },
+        // Healthy / verified. Only ever means "this is fine".
+        ok: {
+          300: '#86dfab',
+          400: '#52cc88',
+          500: '#33b06c',
         },
       },
       fontSize: {
