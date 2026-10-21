@@ -17,6 +17,7 @@ export const AgentRunsModal: React.FC<AgentRunsModalProps> = ({ isOpen, onClose 
   const [runs, setRuns] = useState<AgentRunSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<AgentRunSummary | null>(null);
+  const maxWall = Math.max(1, ...(runs ?? []).map((r) => r.duration_ms ?? 0));
 
   useEffect(() => {
     if (!isOpen) return;
@@ -71,6 +72,7 @@ export const AgentRunsModal: React.FC<AgentRunsModalProps> = ({ isOpen, onClose 
         </p>
       ) : (
         <div className="space-y-3">
+          <p className="text-2xs text-ink-400">Select a run to open its trace.</p>
           <div className="rounded-lg border border-ink-800 overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-ink-950/60 text-2xs uppercase tracking-[0.1em] text-ink-400">
@@ -86,11 +88,18 @@ export const AgentRunsModal: React.FC<AgentRunsModalProps> = ({ isOpen, onClose 
               </thead>
               <tbody className="divide-y divide-ink-850">
                 {runs.map((run) => (
-                  <tr key={run.run_id} className="hover:bg-ink-900">
+                  <tr
+                    key={run.run_id}
+                    onClick={() => setSelected(run)}
+                    className="cursor-pointer hover:bg-ink-900 transition-colors duration-100"
+                  >
                     <td className="px-3 py-2">
                       <button
                         type="button"
-                        onClick={() => setSelected(run)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelected(run);
+                        }}
                         className={`font-mono text-ink-50 hover:underline underline-offset-2 rounded ${focusRing}`}
                       >
                         {run.incident_id}
@@ -106,7 +115,17 @@ export const AgentRunsModal: React.FC<AgentRunsModalProps> = ({ isOpen, onClose 
                     <td className={`px-3 py-2 text-right font-mono tabular-nums ${run.policy_violations ? 'text-red-300' : 'text-ink-400'}`}>
                       {run.policy_violations}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono tabular-nums text-ink-200">{formatMs(run.duration_ms)}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="hidden sm:block w-16 h-1 rounded-full bg-ink-800 overflow-hidden" aria-hidden="true">
+                          <span
+                            className={`block h-full rounded-full ${run.policy_violations ? 'bg-red-400/80' : 'bg-signal-400/70'}`}
+                            style={{ width: `${Math.max(4, ((run.duration_ms ?? 0) / maxWall) * 100)}%` }}
+                          />
+                        </span>
+                        <span className="font-mono tabular-nums text-ink-200 w-14 text-right">{formatMs(run.duration_ms)}</span>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

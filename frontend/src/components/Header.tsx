@@ -33,6 +33,41 @@ const Mark: React.FC = () => (
   </svg>
 );
 
+
+const SectionNav: React.FC<{ page: string; onNavigate: (path: string) => void; className: string }> = ({
+  page,
+  onNavigate,
+  className,
+}) => (
+<nav aria-label="Dashboard sections" className={className}>
+    {(
+      [
+        ['/', 'Incidents', 'incidents'],
+        ['/tickets', 'Tickets', 'tickets'],
+      ] as const
+    ).map(([path, label, id]) => {
+      const active = page === id;
+      return (
+        <a
+          key={path}
+          href={path}
+          aria-current={active ? 'page' : undefined}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            onNavigate(path);
+          }}
+          className={`h-7 px-2 inline-flex items-center rounded-md text-xs ${focusRing} ${
+            active ? 'bg-ink-800 text-ink-50' : 'text-ink-400 hover:text-ink-100 hover:bg-ink-900'
+          }`}
+        >
+          {label}
+        </a>
+      );
+    })}
+  </nav>
+);
+
 export const Header: React.FC<HeaderProps> = ({
   page,
   onNavigate,
@@ -62,33 +97,7 @@ export const Header: React.FC<HeaderProps> = ({
           <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-ink-50">
             OpsPilot
           </h1>
-          <nav aria-label="Dashboard sections" className="flex items-center gap-1 ml-1 sm:ml-2">
-            {(
-              [
-                ['/', 'Incidents', 'incidents'],
-                ['/tickets', 'Tickets', 'tickets'],
-              ] as const
-            ).map(([path, label, id]) => {
-              const active = page === id;
-              return (
-                <a
-                  key={path}
-                  href={path}
-                  aria-current={active ? 'page' : undefined}
-                  onClick={(e) => {
-                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-                    e.preventDefault();
-                    onNavigate(path);
-                  }}
-                  className={`h-7 px-2 inline-flex items-center rounded-md text-xs ${focusRing} ${
-                    active ? 'bg-ink-800 text-ink-50' : 'text-ink-400 hover:text-ink-100 hover:bg-ink-900'
-                  }`}
-                >
-                  {label}
-                </a>
-              );
-            })}
-          </nav>
+          <SectionNav page={page} onNavigate={onNavigate} className="hidden sm:flex items-center gap-1 ml-2" />
           <span className="hidden md:inline px-1.5 py-px rounded border border-ink-800 font-mono text-2xs text-ink-400">
             AWS POC
           </span>
@@ -117,7 +126,8 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               />
             </span>
-            <span className="font-mono text-2xs tracking-wide">{statusText}</span>
+            <span className="hidden sm:inline font-mono text-2xs tracking-wide">{statusText}</span>
+            <span className="sm:hidden sr-only">{statusText}</span>
             {lastUpdated && (
               <span className="hidden lg:inline font-mono text-2xs text-ink-400 tnum">
                 {formatRelative(lastUpdated.toISOString())}
@@ -142,11 +152,12 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={onOpenRuns}
-            className={`${btn.secondary} hidden md:inline-flex`}
+            className={`${btn.secondary} max-md:w-8 max-md:px-0 max-md:justify-center`}
             title="Agent runs and traces: model calls, tool calls, timings"
+            aria-label="Agent runs"
           >
             <Activity className="w-3.5 h-3.5 text-ink-300" aria-hidden="true" />
-            Agent runs
+            <span className="hidden md:inline">Agent runs</span>
           </button>
 
           <button
@@ -162,25 +173,28 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={onOpenEvals}
-            className={btn.secondary}
+            className={`${btn.secondary} max-sm:w-8 max-sm:px-0 max-sm:justify-center`}
             title="Replay the golden M6 benchmark fixtures"
+            aria-label="Run M6 evals"
           >
             <FlaskConical className="w-3.5 h-3.5 text-ink-300" aria-hidden="true" />
             <span className="hidden sm:inline">Run M6 evals</span>
-            <span className="sm:hidden">Evals</span>
           </button>
 
           <button
             type="button"
             onClick={onTriggerSimulation}
-            className={btn.secondary}
+            className={btn.primary}
             title="Send 5 failing requests to sample_service and ingest the resulting alarm (simulated)"
           >
-            <Play className="w-3.5 h-3.5 text-ink-300" aria-hidden="true" />
+            <Play className="w-3.5 h-3.5" aria-hidden="true" />
             <span className="hidden sm:inline">Simulate incident</span>
             <span className="sm:hidden">Simulate</span>
           </button>
         </div>
+      </div>
+      <div className="sm:hidden px-4 pb-2 -mt-1">
+        <SectionNav page={page} onNavigate={onNavigate} className="flex items-center gap-1" />
       </div>
     </header>
   );

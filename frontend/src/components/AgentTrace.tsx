@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { AlertOctagon, Bot, ChevronRight, CornerDownRight, Loader2, Repeat, Wrench } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertOctagon, Bot, CornerDownRight, Loader2, Repeat, Wrench } from 'lucide-react';
 import { AgentRun, SpanKind, TraceSpan } from '../types';
 import { errorMessage, fetchRun, isAbortError } from '../api';
 import { humanize } from '../lib/format';
-import { chip, focusRing } from '../ui/styles';
+import { chip } from '../ui/styles';
 
 /** Duration with a unit that suits its size. */
 export function formatMs(ms: number | null | undefined): string {
@@ -32,12 +32,36 @@ const KIND_ICON: Record<SpanKind, React.FC<{ className?: string }>> = {
   step: CornerDownRight,
 };
 
+const GRID = 'grid grid-cols-[minmax(0,8.5rem)_minmax(0,1fr)_4rem] sm:grid-cols-[minmax(0,13rem)_minmax(0,1fr)_4.5rem] gap-3';
+
 const KIND_BAR: Record<SpanKind, string> = {
   cycle: 'bg-ink-600',
   model: 'bg-signal-500',
   tool: 'bg-ink-200',
   step: 'bg-ink-700',
 };
+
+const KIND_LABEL: Record<SpanKind, string> = { cycle: 'Agent cycle', model: 'Model call', tool: 'Tool call', step: 'Step' };
+
+const TICKS = [0, 25, 50, 75, 100];
+
+/** Swatch key so the bar colours explain themselves. */
+const TraceLegend: React.FC<{ kinds: SpanKind[]; hasError: boolean }> = ({ kinds, hasError }) => (
+  <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-ink-400" aria-label="Span kinds">
+    {kinds.map((k) => (
+      <li key={k} className="inline-flex items-center gap-1.5">
+        <span className={`w-2.5 h-1.5 rounded-sm ${KIND_BAR[k]}`} aria-hidden="true" />
+        {KIND_LABEL[k]}
+      </li>
+    ))}
+    {hasError && (
+      <li className="inline-flex items-center gap-1.5">
+        <span className="w-2.5 h-1.5 rounded-sm bg-red-400" aria-hidden="true" />
+        Blocked or failed
+      </li>
+    )}
+  </ul>
+);
 
 function spanLabel(span: TraceSpan): string {
   if (span.kind === 'step' && span.name === 'Recursive call') return 'Next cycle';
@@ -91,6 +115,18 @@ export const AgentTrace: React.FC<AgentTraceProps> = ({ runId, compact = false }
   }, [runId]);
 
   const total = useMemo(() => (run ? traceExtent(run.spans) : 0), [run]);
+  const listRef = useRef<HTMLOListElement>(null);
+
+  // Up/Down walk the spans, Home/End jump to the ends; selection follows focus.
+  const onListKeyDown = (e: React.KeyboardEvent<HTMLOListElement>) => {
+    if (!run || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const idx = Math.max(0, run.spans.findIndex((s) => s.id === selected));
+    const last = run.spans.length - 1;
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? last : e.key === 'ArrowDown' ? Math.min(last, idx + 1) : Math.max(0, idx - 1);
+    setSelected(run.spans[next].id);
+    listRef.current?.querySelectorAll<HTMLButtonElement>('button[data-span]')[next]?.focus();
+  };
 
   if (error) {
     return (
@@ -114,45 +150,71 @@ export const AgentTrace: React.FC<AgentTraceProps> = ({ runId, compact = false }
       {!compact && <RunMetrics run={run} />}
 
       <div className="rounded-lg border border-ink-800 overflow-hidden">
-        <div className="grid grid-cols-[minmax(0,13rem)_minmax(0,1fr)_4.5rem] gap-3 px-3 py-1.5 bg-ink-950/60 border-b border-ink-800 text-2xs uppercase tracking-[0.1em] text-ink-400">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-ink-800">
+          <TraceLegend
+            kinds={(['cycle', 'model', 'tool', 'step'] as SpanKind[]).filter((k) => run.spans.some((s) => s.kind === k))}
+            hasError={run.spans.some((s) => s.status === 'error')}
+          />
+          <span className="font-mono text-2xs text-ink-500 tnum">
+            {run.spans.length} spans · ↑↓ to step
+          </span>
+        </div>
+        <div className={`${GRID} px-3 py-1.5 bg-ink-950/60 border-b border-ink-800 text-2xs uppercase tracking-[0.1em] text-ink-400`}>
           <span>Span</span>
-          <span className="flex justify-between font-mono normal-case tracking-normal">
-            <span>0</span>
-            <span>{formatMs(total)}</span>
+          <span className="relative h-4 font-mono normal-case tracking-normal tnum" aria-hidden="true">
+            {TICKS.map((t) => (
+              <span
+                key={t}
+                className={`absolute top-0 ${t === 0 ? '' : t === 100 ? '-translate-x-full' : '-translate-x-1/2 hidden sm:inline'}`}
+                style={{ left: `${t}%` }}
+              >
+                {t === 0 ? '0' : formatMs((total * t) / 100)}
+              </span>
+            ))}
           </span>
           <span className="text-right">Duration</span>
         </div>
-        <ol role="listbox" aria-label="Trace spans" className="divide-y divide-ink-850">
+        <ol ref={listRef} aria-label="Trace spans" onKeyDown={onListKeyDown} className="relative">
           {run.spans.map((span) => {
             const Icon = KIND_ICON[span.kind] ?? CornerDownRight;
             const { left, width } = spanGeometry(span, total);
             const isActive = span.id === selected;
             const failed = span.status === 'error';
+            const isCycle = span.kind === 'cycle';
             return (
-              <li key={span.id} role="option" aria-selected={isActive}>
+              <li key={span.id} className={isCycle ? 'border-t border-ink-800 first:border-t-0' : ''}>
                 <button
                   type="button"
+                  data-span
+                  aria-pressed={isActive}
+                  tabIndex={isActive ? 0 : -1}
                   onClick={() => setSelected(span.id)}
-                  className={`w-full grid grid-cols-[minmax(0,13rem)_minmax(0,1fr)_4.5rem] gap-3 items-center px-3 py-1.5 text-left text-xs transition-colors ${
-                    isActive ? 'bg-ink-850' : 'hover:bg-ink-900'
-                  } ${focusRing}`}
+                  className={`relative w-full ${GRID} items-center px-3 py-1.5 text-left text-xs transition-colors duration-100 ${
+                    isActive ? 'bg-ink-850' : isCycle ? 'bg-ink-950/40 hover:bg-ink-900' : 'hover:bg-ink-900'
+                  } focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal-400`}
                 >
-                  <span className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${span.depth * 14}px` }}>
-                    <Icon className={`w-3.5 h-3.5 shrink-0 ${failed ? 'text-red-300' : 'text-ink-400'}`} aria-hidden="true" />
+                  {isActive && <span className="absolute left-0 inset-y-0 w-[2px] bg-signal-400" aria-hidden="true" />}
+                  <span className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${span.depth * 12}px` }}>
+                    <Icon className={`w-3.5 h-3.5 shrink-0 ${failed ? 'text-red-300' : isActive ? 'text-ink-100' : 'text-ink-400'}`} aria-hidden="true" />
                     <span
-                      className={`truncate ${span.kind === 'tool' ? 'font-mono text-ink-100' : span.kind === 'cycle' ? 'text-ink-200 font-medium' : 'text-ink-300'}`}
+                      className={`truncate ${span.kind === 'tool' ? 'font-mono text-ink-100' : isCycle ? 'text-ink-100 font-medium' : 'text-ink-300'}`}
                     >
                       {spanLabel(span)}
                     </span>
                     {failed && <span className={`${chip} text-red-300 border-red-500/30`}>{span.policy_status ? humanize(span.policy_status) : 'error'}</span>}
                   </span>
-                  <span className="relative h-2 rounded-sm bg-ink-900" aria-hidden="true">
+                  <span className="relative h-2" aria-hidden="true">
+                    {TICKS.slice(1, -1).map((t) => (
+                      <span key={t} className="absolute -inset-y-1.5 w-px bg-ink-800/70" style={{ left: `${t}%` }} />
+                    ))}
                     <span
-                      className={`absolute inset-y-0 rounded-sm ${failed ? 'bg-red-400' : KIND_BAR[span.kind] ?? 'bg-ink-600'}`}
+                      className={`absolute inset-y-0 rounded-[2px] ${failed ? 'bg-red-400' : KIND_BAR[span.kind] ?? 'bg-ink-600'} ${
+                        isActive ? 'ring-1 ring-ink-50/70 ring-offset-1 ring-offset-ink-850' : ''
+                      }`}
                       style={{ left: `${left}%`, width: `${width}%` }}
                     />
                   </span>
-                  <span className="text-right font-mono tabular-nums text-ink-300">{formatMs(span.duration_ms)}</span>
+                  <span className={`text-right font-mono tabular-nums ${isActive ? 'text-ink-50' : 'text-ink-300'}`}>{formatMs(span.duration_ms)}</span>
                 </button>
               </li>
             );
@@ -192,7 +254,6 @@ export const RunMetrics: React.FC<{ run: AgentRun }> = ({ run }) => {
 
 const SpanInspector: React.FC<{ span: TraceSpan }> = ({ span }) => {
   const facts: [string, string][] = [
-    ['Kind', humanize(span.kind)],
     ['Starts at', span.start_ms === null ? '—' : `+${formatMs(span.start_ms)}`],
     ['Duration', formatMs(span.duration_ms)],
   ];
@@ -204,8 +265,9 @@ const SpanInspector: React.FC<{ span: TraceSpan }> = ({ span }) => {
   return (
     <section aria-label={`Span ${spanLabel(span)}`} className="rounded-lg border border-ink-800 bg-ink-950/50 p-3 space-y-3">
       <header className="flex items-center gap-1.5 text-xs text-ink-100">
-        <ChevronRight className="w-3.5 h-3.5 text-ink-400" aria-hidden="true" />
-        <span className={span.kind === 'tool' ? 'font-mono' : ''}>{spanLabel(span)}</span>
+        <span className={`w-2.5 h-1.5 rounded-sm ${span.status === 'error' ? 'bg-red-400' : KIND_BAR[span.kind] ?? 'bg-ink-600'}`} aria-hidden="true" />
+        <span className={`font-medium ${span.kind === 'tool' ? 'font-mono' : ''}`}>{spanLabel(span)}</span>
+        <span className="text-ink-500">· {KIND_LABEL[span.kind] ?? humanize(span.kind)}</span>
       </header>
       <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
         {facts.map(([k, v]) => (

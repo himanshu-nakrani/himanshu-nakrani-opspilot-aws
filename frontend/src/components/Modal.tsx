@@ -114,7 +114,7 @@ export const Modal: React.FC<ModalProps> = ({
           <div className="flex items-start gap-2.5 min-w-0">
             {icon}
             <div className="min-w-0">
-              <h2 id={titleId} className="text-[15px] font-semibold tracking-[-0.015em] text-ink-50">
+              <h2 id={titleId} className="text-base font-semibold tracking-[-0.02em] text-ink-50">
                 {title}
               </h2>
               {description && (
