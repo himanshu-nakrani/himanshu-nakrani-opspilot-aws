@@ -15,8 +15,8 @@ sample-service (Lambda, Python)  ──logs──►  CloudWatch Logs
   │ CollectCtx   │ RunRCA       │ Route        │ CreateTicket │ ProposeFix   │ Verify       │ Notify
   │ Lambda       │ Lambda →     │ Choice on    │ Lambda →     │ Lambda/      │ CodeBuild    │ Lambda →
   │ Logs Insights│ Bedrock      │ classification│ Jira REST v3 │ Fargate →    │ (sync .sync) │ Slack webhook
-  │ + GitHub API │ Converse +   │ + confidence │              │ Bedrock +    │ repro test   │ + SNS email
-  │ (blame/commits)│ toolUse JSON│              │              │ GitHub PR    │ main vs fix  │
+  │ + CodeCommit │ Converse +   │ + confidence │              │ Bedrock +    │ repro test   │ + SNS email
+  │ (file/commits) │ toolUse JSON│              │              │ CodeCommit PR│ main vs fix  │
   └──────────────┴──────────────┴──────────────┴──────────────┴──────────────┴──────────────┘
                      every step writes to DynamoDB `opspilot-incidents` (state + audit trail)
 ```
@@ -97,11 +97,11 @@ AWS's modular foundation for running agents in production:
 - **Evidence grounding.** Each `evidence[].ref` must point to a log line ID or file:line that exists in the context bundle. Lambda checks this; unverifiable claims lower confidence to at most 0.4.
 - **Patch limits.** At most 3 files and 80 changed lines. No changes to CI config, IaC or dependency manifests. If a patch breaks the limits, still file the ticket and add a note, but open no PR.
 - **Retry cap.** If verification fails, ProposeFix runs one more time with the failure log. After that the PR is marked draft and a "needs human" label is added.
-- **Secrets.** Jira token, GitHub token and Slack webhook live in Secrets Manager. Log payloads are redacted (emails, tokens, IPs) before any Bedrock call.
+- **Secrets.** Jira token and Slack webhook live in Secrets Manager. Source control is AWS CodeCommit, reached with each Lambda's IAM role (no Git token at all). Log payloads are redacted (emails, tokens, IPs) before any Bedrock call.
 - **Cost guard.** Max 1 RCA per alarm per 15 min; per-run token budget enforced in RunRCA.
 
 ## Observability of OpsPilot itself
-Every run records: model ID, tokens in and out, tool calls, latency per step, classification, confidence, PR merged/closed/reverted (from a GitHub webhook, later). These feed the eval metrics in IMPLEMENTATION_SPEC §M6.
+Every run records: model ID, tokens in and out, tool calls, latency per step, classification, confidence, PR merged/closed/reverted (from CodeCommit pull-request events via EventBridge, later). These feed the eval metrics in IMPLEMENTATION_SPEC §M6.
 
 ## Deliberately out of scope for the POC
 Multi-service causal analysis, metric anomaly detection, auto-merge or auto-deploy, multi-repo support, GitLab, Datadog/Sentry ingestion (the design is source-neutral: only CollectContext changes).

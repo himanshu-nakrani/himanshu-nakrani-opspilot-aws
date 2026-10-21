@@ -12,7 +12,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from opspilot.contracts import PrRef, RcaResult, TicketRef
 from opspilot.audit import update_incident
-from opspilot.fix.git_ops import GitHubClient, apply_unified_diff, get_github_token
+from opspilot.fix.git_ops import apply_unified_diff
+from opspilot.fix.scm import get_scm_client
 from opspilot.fix.guardrails import PatchRejectedException, validate_patch_limits
 
 logger = logging.getLogger(__name__)
@@ -121,12 +122,13 @@ def propose_fix(
     ticket_ref: TicketRef,
     repo_root: Optional[str] = None,  # kept for signature compatibility; unused
     attempt: int = 1,
-    github: Optional[GitHubClient] = None,
+    github: Optional[Any] = None,  # SCM client (CodeCommit by default); name kept for compatibility
     base_branch: str = "main",
 ) -> PrRef:
-    """Generate the fix, enforce limits, commit it to a branch on GitHub and open a PR.
+    """Generate the fix, enforce limits, commit it to a branch in the source repo
+    (AWS CodeCommit by default) and open a PR.
 
-    Every failure raises (UnsupportedFixTarget, PatchApplyError, GitHubError,
+    Every failure raises (UnsupportedFixTarget, PatchApplyError, CodeCommitError/GitHubError,
     PolicyViolationError); nothing returns a placeholder PR.
     """
     ensure_supported_fix(rca)
@@ -136,8 +138,7 @@ def propose_fix(
     validate_patch_limits(patch_diff, extra_files=[test_path], extra_lines=len(repro_code.splitlines()))
 
     if github is None:
-        repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws")
-        github = GitHubClient(repo, get_github_token())
+        github = get_scm_client()
 
     base_content = github.get_file(target, base_branch)
     patched = apply_unified_diff(base_content, patch_diff, target)
@@ -175,7 +176,7 @@ def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, A
     return pr_ref.model_dump()
 
 
-def mark_needs_human_handler(event: Dict[str, Any], context: Optional[Any] = None, github: Optional[GitHubClient] = None) -> Dict[str, Any]:
+def mark_needs_human_handler(event: Dict[str, Any], context: Optional[Any] = None, github: Optional[Any] = None) -> Dict[str, Any]:
     """Lambda entry point for Step Functions MarkNeedsHuman state."""
     logger.info("MarkNeedsHuman invoked with event keys: %s", list(event.keys()))
     pr_data = dict(event.get("pr") or {})
@@ -183,7 +184,10 @@ def mark_needs_human_handler(event: Dict[str, Any], context: Optional[Any] = Non
     if not pr_number:
         raise ValueError("MarkNeedsHuman requires pr.pr_number; refusing to label an arbitrary PR")
     if github is None:
-        github = GitHubClient(os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws"), get_github_token())
-    github.add_labels(int(pr_number), ["needs-human"])
+        github = get_scm_client()
+    if hasattr(github, "mark_needs_human"):
+        github.mark_needs_human(int(pr_number))  # CodeCommit: title prefix + PR comment
+    else:
+        github.add_labels(int(pr_number), ["needs-human"])
     pr_data["status"] = "needs_human"
     return pr_data

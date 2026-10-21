@@ -25,6 +25,24 @@ from infra.bundling import python_lambda_code
 from infra.sample_service_stack import ALARM_PREFIX, SampleServiceStack
 
 
+# CodeCommit actions, scoped to the one repo ARN via Repository.grant().
+CODECOMMIT_READ_ACTIONS = (
+    "codecommit:GetRepository",
+    "codecommit:GetBranch",
+    "codecommit:GetFile",
+    "codecommit:GetCommit",
+    "codecommit:GetDifferences",
+)
+CODECOMMIT_PR_WRITE_ACTIONS = (
+    "codecommit:CreateBranch",
+    "codecommit:DeleteBranch",
+    "codecommit:CreateCommit",
+    "codecommit:ListPullRequests",
+    "codecommit:GetPullRequest",
+    "codecommit:CreatePullRequest",
+)
+
+
 class PipelineStack(Stack):
     def __init__(
         self,
@@ -37,14 +55,16 @@ class PipelineStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
-        github_repo = os.environ.get("GITHUB_REPO", "himanshu-nakrani/opspilot-aws")
+        source_repo = core_stack.source_repo
         jira_base_url = os.environ.get("JIRA_BASE_URL", "https://jira.example.com")
         jira_project_key = os.environ.get("JIRA_PROJECT_KEY", "OPS")
         jira_email = os.environ.get("JIRA_EMAIL", "opspilot@example.com")
 
         common_env = {
             "INCIDENTS_TABLE_NAME": core_stack.incidents_table.table_name,
-            "GITHUB_REPO": github_repo,
+            "SCM_PROVIDER": "codecommit",
+            "CODECOMMIT_REPO": source_repo.repository_name,
+            "CODECOMMIT_BRANCH": "main",
             "BEDROCK_MODEL_ID": bedrock_model_id,
             "STRANDS_FRAMEWORK": "strands-agents",
             "AGENTCORE_RUNTIME_ENABLED": "true",
@@ -53,10 +73,9 @@ class PipelineStack(Stack):
             "JIRA_PROJECT_KEY": jira_project_key,
             "JIRA_EMAIL": jira_email,
             "JIRA_SECRET_ARN": core_stack.jira_secret.secret_arn,
-            "GITHUB_SECRET_ARN": core_stack.github_secret.secret_arn,
             "SLACK_SECRET_ARN": core_stack.slack_secret.secret_arn,
             "SNS_TOPIC_ARN": core_stack.alerts_topic.topic_arn,
-            # Explicit live mode: real Bedrock/GitHub/Jira, failures raise to Step Functions.
+            # Explicit live mode: real Bedrock/CodeCommit/Jira, failures raise to Step Functions.
             "OPSPILOT_MODE": "live",
         }
 
@@ -85,6 +104,7 @@ class PipelineStack(Stack):
         )
         core_stack.incidents_table.grant_read_write_data(self.collect_context_fn)
         sample_service_stack.log_group.grant(self.collect_context_fn, "logs:FilterLogEvents", "logs:StartQuery", "logs:GetQueryResults")
+        source_repo.grant(self.collect_context_fn, *CODECOMMIT_READ_ACTIONS)
 
         # 2. RunRCA Function (Least privilege: invoke only configured Bedrock model)
         self.run_rca_fn = lambda_.Function(
@@ -134,7 +154,7 @@ class PipelineStack(Stack):
             environment=common_env,
         )
         core_stack.incidents_table.grant_read_write_data(self.propose_fix_fn)
-        core_stack.github_secret.grant_read(self.propose_fix_fn)
+        source_repo.grant(self.propose_fix_fn, *CODECOMMIT_READ_ACTIONS, *CODECOMMIT_PR_WRITE_ACTIONS)
         # ProposeFix does not call Bedrock today (stub generator); grant it when a real patch agent lands.
 
         # 5. MarkNeedsHuman Function
@@ -150,7 +170,12 @@ class PipelineStack(Stack):
             environment=common_env,
         )
         core_stack.incidents_table.grant_read_write_data(self.mark_needs_human_fn)
-        core_stack.github_secret.grant_read(self.mark_needs_human_fn)
+        source_repo.grant(
+            self.mark_needs_human_fn,
+            "codecommit:GetPullRequest",
+            "codecommit:UpdatePullRequestTitle",
+            "codecommit:PostCommentForPullRequest",
+        )
 
         # 6. Notify Function
         self.notify_fn = lambda_.Function(
@@ -169,19 +194,19 @@ class PipelineStack(Stack):
         core_stack.alerts_topic.grant_publish(self.notify_fn)
 
         # 7. CodeBuild Verify Project
-        owner, repo_name = github_repo.split("/", 1) if "/" in github_repo else ("himanshu-nakrani", "opspilot-aws")
         self.verify_project = codebuild.Project(
             self,
             "VerifyProject",
             project_name="opspilot-verify-fix",
             description="Two-phase verification: repro test must fail on base and pass on fix branch",
-            source=codebuild.Source.git_hub(
-                owner=owner,
-                repo=repo_name,
-            ),
+            source=codebuild.Source.code_commit(repository=source_repo, clone_depth=0),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
                 compute_type=codebuild.ComputeType.SMALL,
+                environment_variables={
+                    # buildspec fetches the base ref over HTTPS with the AWS CLI credential helper
+                    "CODECOMMIT_CLONE_URL": codebuild.BuildEnvironmentVariable(value=source_repo.repository_clone_url_http),
+                },
             ),
             build_spec=codebuild.BuildSpec.from_source_filename("src/opspilot/verify/buildspec.yml"),
         )
