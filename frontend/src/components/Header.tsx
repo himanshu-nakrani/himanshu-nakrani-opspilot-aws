@@ -1,5 +1,7 @@
 import React from 'react';
-import { Zap, Play, FlaskConical, RefreshCw, Cpu } from 'lucide-react';
+import { Play, FlaskConical, RefreshCw, Cpu } from 'lucide-react';
+import { btn, focusRing } from '../ui/styles';
+import { formatRelative } from '../lib/format';
 
 interface HeaderProps {
   onTriggerSimulation: () => void;
@@ -9,9 +11,24 @@ interface HeaderProps {
   isRefreshing: boolean;
   autoRefresh: boolean;
   setAutoRefresh: (val: boolean) => void;
+  lastUpdated?: Date | null;
+  hasError?: boolean;
 }
 
-const focusRing = 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400';
+/** Heartbeat glyph used as the product mark (matches the favicon). */
+const Mark: React.FC = () => (
+  <svg viewBox="0 0 100 100" className="w-7 h-7 shrink-0" aria-hidden="true">
+    <rect width="100" height="100" rx="18" className="fill-ink-800" />
+    <path
+      d="M14 56h18l8-22 14 40 10-26 6 8h16"
+      fill="none"
+      className="stroke-signal-400"
+      strokeWidth="9"
+      strokeLinejoin="round"
+      strokeLinecap="round"
+    />
+  </svg>
+);
 
 export const Header: React.FC<HeaderProps> = ({
   onTriggerSimulation,
@@ -21,80 +38,109 @@ export const Header: React.FC<HeaderProps> = ({
   isRefreshing,
   autoRefresh,
   setAutoRefresh,
-}) => (
-  <header className="border-b border-slate-800 bg-slate-900/70 backdrop-blur-md sticky top-0 z-30">
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 border border-emerald-500/30 flex items-center justify-center">
-          <Zap className="w-5 h-5 text-emerald-400 fill-emerald-400/20" aria-hidden="true" />
+  lastUpdated,
+  hasError,
+}) => {
+  const live = autoRefresh && !hasError;
+  const statusText = hasError
+    ? 'Connection issue'
+    : autoRefresh
+      ? 'Live · 10s'
+      : 'Paused';
+
+  return (
+    <header className="sticky top-0 z-30 border-b border-ink-800 bg-ink-950">
+      <div className="px-4 sm:px-6 h-14 flex items-center gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Mark />
+          <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-ink-50">
+            OpsPilot
+          </h1>
+          <span className="hidden sm:inline text-ink-600" aria-hidden="true">/</span>
+          <span className="hidden sm:inline text-[13px] text-ink-300 truncate">Incident console</span>
+          <span className="hidden md:inline px-1.5 py-px rounded border border-ink-700 font-mono text-2xs text-ink-300">
+            AWS POC
+          </span>
         </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="font-bold text-lg tracking-tight text-white">OpsPilot</h1>
-            <span className="px-2 py-0.5 text-[11px] font-semibold tracking-wide uppercase rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-              AWS POC
+
+        <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+          {/* Live status: doubles as the auto-refresh switch */}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoRefresh}
+            onClick={() => setAutoRefresh(!autoRefresh)}
+            title={autoRefresh ? 'Pause auto-refresh (polls every 10s)' : 'Resume auto-refresh (polls every 10s)'}
+            className={`h-8 px-2.5 inline-flex items-center gap-2 rounded-md border text-xs transition-colors duration-150 ${focusRing} ${
+              hasError
+                ? 'border-red-500/40 text-red-200 bg-red-500/10'
+                : autoRefresh
+                  ? 'border-ink-700 text-ink-100 hover:bg-ink-800'
+                  : 'border-ink-700 text-ink-400 hover:bg-ink-800'
+            }`}
+          >
+            <span className="relative flex w-2 h-2" aria-hidden="true">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  hasError ? 'bg-red-400' : live ? 'bg-signal-400 motion-safe:animate-pulse-dot' : 'bg-ink-500'
+                }`}
+              />
             </span>
-            <button
-              type="button"
-              onClick={onOpenAgentCore}
-              className={`hidden sm:flex px-2 py-0.5 text-[11px] font-mono font-medium rounded-full bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 transition items-center gap-1 ${focusRing}`}
-            >
-              <Cpu className="w-3 h-3" aria-hidden="true" />
-              Strands + AgentCore
-            </button>
-          </div>
-          <p className="text-xs text-slate-400 hidden sm:block truncate">Autonomous SRE incident monitoring &amp; remediation</p>
+            <span className="font-mono text-2xs tracking-wide">{statusText}</span>
+            {lastUpdated && (
+              <span className="hidden lg:inline font-mono text-2xs text-ink-400 tnum">
+                {formatRelative(lastUpdated.toISOString())}
+              </span>
+            )}
+            <span className="sr-only">Auto-refresh</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            aria-label="Refresh incidents and stats"
+            title="Refresh incidents and stats"
+            className={btn.ghost}
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'motion-safe:animate-spin text-signal-400' : ''}`} aria-hidden="true" />
+          </button>
+
+          <span className="hidden sm:block w-px h-5 bg-ink-800 mx-1" aria-hidden="true" />
+
+          <button
+            type="button"
+            onClick={onOpenAgentCore}
+            className={`${btn.secondary} hidden lg:inline-flex`}
+            title="Inspect Strands SDK and AgentCore configuration"
+          >
+            <Cpu className="w-3.5 h-3.5 text-ink-300" aria-hidden="true" />
+            Agent runtime
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenEvals}
+            className={btn.secondary}
+            title="Replay the golden M6 benchmark fixtures"
+          >
+            <FlaskConical className="w-3.5 h-3.5 text-ink-300" aria-hidden="true" />
+            <span className="hidden sm:inline">Run M6 evals</span>
+            <span className="sm:hidden">Evals</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onTriggerSimulation}
+            className={btn.primary}
+            title="Send 5 failing requests to sample_service and ingest the resulting alarm (simulated)"
+          >
+            <Play className="w-3.5 h-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">Simulate incident</span>
+            <span className="sm:hidden">Simulate</span>
+          </button>
         </div>
       </div>
-
-      <div className="flex items-center gap-2 sm:gap-3">
-        <label className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer mr-1">
-          <input
-            type="checkbox"
-            checked={autoRefresh}
-            onChange={(e) => setAutoRefresh(e.target.checked)}
-            className="rounded bg-slate-800 border-slate-600 text-emerald-500 focus:ring-2 focus:ring-emerald-400"
-          />
-          <span className="hidden md:inline">Auto-refresh (10s)</span>
-          <span className="md:hidden">Auto</span>
-        </label>
-
-        <button
-          type="button"
-          onClick={onTriggerSimulation}
-          className={`px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 transition flex items-center gap-1.5 ${focusRing}`}
-          title="Send 5 failing requests to sample_service and ingest the resulting alarm (simulated)"
-        >
-          <Play className="w-3.5 h-3.5" aria-hidden="true" />
-          <span className="hidden sm:inline">Simulate Incident</span>
-          <span className="sm:hidden">Simulate</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onOpenEvals}
-          className={`px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center gap-1.5 ${focusRing}`}
-          title="Replay the golden M6 benchmark fixtures"
-        >
-          <FlaskConical className="w-3.5 h-3.5 text-sky-400" aria-hidden="true" />
-          <span className="hidden sm:inline">Run M6 Evals</span>
-          <span className="sm:hidden">Evals</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={isRefreshing}
-          aria-label="Refresh incidents and stats"
-          title="Refresh incidents and stats"
-          className={`p-2 text-slate-300 hover:text-white rounded-lg hover:bg-slate-800 transition disabled:opacity-60 ${focusRing}`}
-        >
-          <RefreshCw
-            className={`w-4 h-4 ${isRefreshing ? 'motion-safe:animate-spin text-emerald-400' : ''}`}
-            aria-hidden="true"
-          />
-        </button>
-      </div>
-    </div>
-  </header>
-);
+    </header>
+  );
+};

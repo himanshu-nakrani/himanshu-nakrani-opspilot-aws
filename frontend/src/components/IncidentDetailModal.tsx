@@ -11,14 +11,14 @@ interface IncidentDetailModalProps {
   onClose: () => void;
 }
 
-const sectionTitle = 'text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2';
+const sectionTitle = 'text-xs font-semibold uppercase tracking-wider text-ink-300 mb-2';
 
 function diffLineClass(line: string): string {
-  if (line.startsWith('+++') || line.startsWith('---')) return 'text-slate-300 font-semibold';
-  if (line.startsWith('+')) return 'text-emerald-300 bg-emerald-500/10';
+  if (line.startsWith('+++') || line.startsWith('---')) return 'text-ink-300 font-semibold';
+  if (line.startsWith('+')) return 'text-signal-300 bg-signal-500/10';
   if (line.startsWith('-')) return 'text-red-300 bg-red-500/10';
   if (line.startsWith('@@')) return 'text-sky-300';
-  return 'text-slate-300';
+  return 'text-ink-300';
 }
 
 export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incident: initial, onClose }) => {
@@ -85,27 +85,27 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
 
       <section>
         <h3 className={sectionTitle}>Root-cause summary</h3>
-        <p className="text-sm text-slate-200 leading-relaxed">{incident.summary || 'No summary available.'}</p>
+        <p className="text-sm text-ink-200 leading-relaxed">{incident.summary || 'No summary available.'}</p>
       </section>
 
       <div className="grid md:grid-cols-2 gap-4">
-        <section className="p-4 rounded-xl bg-slate-950/50 border border-slate-800">
+        <section className="p-4 rounded-lg bg-ink-950/50 border border-ink-800">
           <h3 className={sectionTitle}>
             <FileCode className="inline w-3.5 h-3.5 mr-1" aria-hidden="true" />
             Suspected location
           </h3>
           {loc ? (
-            <p className="font-mono text-xs text-slate-200 break-all">
+            <p className="font-mono text-xs text-ink-200 break-all">
               {loc.file}:{loc.line}
-              {loc.function && <span className="text-slate-400"> in {loc.function}()</span>}
+              {loc.function && <span className="text-ink-400"> in {loc.function}()</span>}
             </p>
           ) : (
-            <p className="text-xs text-slate-400">Not identified.</p>
+            <p className="text-xs text-ink-400">Not identified.</p>
           )}
         </section>
-        <section className="p-4 rounded-xl bg-slate-950/50 border border-slate-800">
+        <section className="p-4 rounded-lg bg-ink-950/50 border border-ink-800">
           <h3 className={sectionTitle}>Suggested fix strategy</h3>
-          <p className="text-xs text-slate-200">{incident.suggested_fix_strategy || 'None proposed.'}</p>
+          <p className="text-xs text-ink-200">{incident.suggested_fix_strategy || 'None proposed.'}</p>
         </section>
       </div>
 
@@ -117,22 +117,22 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
         {evidence.length > 0 ? (
           <ul className="space-y-2">
             {evidence.map((ev, i) => (
-              <li key={`${ev.ref}-${i}`} className="p-3 rounded-lg bg-slate-950/50 border border-slate-800 text-xs">
-                <div className="flex flex-wrap gap-2 text-slate-400 font-mono">
+              <li key={`${ev.ref}-${i}`} className="p-3 rounded-lg bg-ink-950/50 border border-ink-800 text-xs">
+                <div className="flex flex-wrap gap-2 text-ink-400 font-mono">
                   <span className="uppercase">{humanize(ev.kind)}</span>
                   <span className="break-all">{ev.ref}</span>
                 </div>
-                <p className="text-slate-200 mt-1">{ev.claim}</p>
+                <p className="text-ink-200 mt-1">{ev.claim}</p>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-xs text-slate-400">No evidence items recorded.</p>
+          <p className="text-xs text-ink-400">No evidence items recorded.</p>
         )}
         {incident.ruled_out && incident.ruled_out.length > 0 && (
           <div className="mt-3">
-            <h4 className="text-xs text-slate-300 mb-1">Ruled out</h4>
-            <ul className="list-disc pl-5 text-xs text-slate-300 space-y-0.5">
+            <h4 className="text-xs text-ink-300 mb-1">Ruled out</h4>
+            <ul className="list-disc pl-5 text-xs text-ink-300 space-y-0.5">
               {incident.ruled_out.map((r) => (
                 <li key={r}>{r}</li>
               ))}
@@ -144,7 +144,7 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
       {incident.patch_diff && (
         <section>
           <h3 className={sectionTitle}>Proposed patch</h3>
-          <pre className="text-xs font-mono rounded-xl bg-slate-950 border border-slate-800 p-3 overflow-x-auto">
+          <pre className="text-xs font-mono rounded-lg bg-ink-950 border border-ink-800 p-3 overflow-x-auto">
             {incident.patch_diff.split('\n').map((line, idx) => (
               <div key={idx} className={`px-1 ${diffLineClass(line)}`}>
                 {line || ' '}
@@ -167,7 +167,7 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
             </LinkOrLabel>
           )}
           {!incident.ticket_url && !incident.pr_url && (
-            <span className="text-slate-400 self-center">No ticket or PR was created for this {incident.source === 'dynamodb' ? 'incident' : 'demo record'}.</span>
+            <span className="text-ink-400 self-center">No ticket or PR was created for this {incident.source === 'dynamodb' ? 'incident' : 'demo record'}.</span>
           )}
         </section>
       )}
@@ -176,9 +176,9 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
 };
 
 const LinkOrLabel: React.FC<{ url?: string | null; icon: React.ReactNode; children: React.ReactNode }> = ({ url, icon, children }) => {
-  const cls = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/60 font-mono text-slate-200';
+  const cls = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-ink-700 bg-ink-800/60 font-mono text-ink-200';
   return url ? (
-    <a href={url} target="_blank" rel="noopener noreferrer" className={`${cls} hover:bg-slate-700`}>
+    <a href={url} target="_blank" rel="noopener noreferrer" className={`${cls} hover:bg-ink-700`}>
       {icon}
       {children}
       <ExternalLink className="w-3 h-3" aria-hidden="true" />
