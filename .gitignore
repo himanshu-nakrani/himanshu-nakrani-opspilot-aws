@@ -6,3 +6,5 @@ cdk.out/
 .pytest_cache/
 node_modules/
 
+.env.deploy
+cdk-outputs.json

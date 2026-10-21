@@ -67,26 +67,54 @@ def parse_stack_trace_from_logs(log_messages: List[str]) -> Optional[StackTraceI
     )
 
 
+# Error-ish events first: an unfiltered FilterLogEvents call returns the *earliest*
+# events in the window, and on a service with steady traffic the first 50 are
+# START/END/REPORT and request lines, so the traceback never reaches the RCA.
+ERROR_FILTER_PATTERN = (
+    '?Traceback ?ERROR ?Exception ?WARN ?"Task timed out" ?"Runtime exited" ?"Runtime.OutOfMemory"'
+)
+
+
+def _filter_events(client, log_group: str, start_time: int, end_time: int,
+                   filter_pattern: Optional[str], limit: int) -> List[Dict[str, Any]]:
+    kwargs: Dict[str, Any] = {"logGroupName": log_group, "startTime": start_time, "endTime": end_time}
+    if filter_pattern:
+        kwargs["filterPattern"] = filter_pattern
+    events: List[Dict[str, Any]] = []
+    token = None
+    for _ in range(10):  # bounded pagination
+        if token:
+            kwargs["nextToken"] = token
+        resp = client.filter_log_events(**kwargs, limit=limit)
+        events.extend(resp.get("events", []))
+        token = resp.get("nextToken")
+        if not token or len(events) >= limit:
+            break
+    return events[:limit]
+
+
 def fetch_cloudwatch_logs(
     log_group: str,
     detected_at_dt: datetime,
     logs_client=None,
     window_minutes: int = 10,
+    limit: int = 50,
 ) -> List[LogLine]:
-    """Fetch logs around detected_at ± window_minutes."""
+    """Fetch logs around detected_at ± window_minutes, error/warning events first.
+
+    Falls back to the unfiltered window when nothing matches (e.g. a pure latency
+    incident with no error lines), so the RCA still sees what the service logged.
+    """
     client = logs_client or boto3.client("logs")
     start_time = int((detected_at_dt - timedelta(minutes=window_minutes)).timestamp() * 1000)
     end_time = int((detected_at_dt + timedelta(minutes=window_minutes)).timestamp() * 1000)
 
     log_lines: List[LogLine] = []
     try:
-        resp = client.filter_log_events(
-            logGroupName=log_group,
-            startTime=start_time,
-            endTime=end_time,
-            limit=50,
-        )
-        for idx, event in enumerate(resp.get("events", []), start=1):
+        events = _filter_events(client, log_group, start_time, end_time, ERROR_FILTER_PATTERN, limit)
+        if not events:
+            events = _filter_events(client, log_group, start_time, end_time, None, limit)
+        for idx, event in enumerate(events, start=1):
             ts = datetime.fromtimestamp(event["timestamp"] / 1000.0, tz=timezone.utc).isoformat()
             raw_msg = event.get("message", "")
             redacted_msg = redact_text(raw_msg)
