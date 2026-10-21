@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, FlaskConical, RefreshCw, Cpu } from 'lucide-react';
+import { Play, FlaskConical, RefreshCw, Cpu, Activity } from 'lucide-react';
 import { btn, focusRing } from '../ui/styles';
 import { formatRelative } from '../lib/format';
 
@@ -7,6 +7,7 @@ interface HeaderProps {
   onTriggerSimulation: () => void;
   onOpenEvals: () => void;
   onOpenAgentCore: () => void;
+  onOpenRuns: () => void;
   onRefresh: () => void;
   isRefreshing: boolean;
   autoRefresh: boolean;
@@ -34,6 +35,7 @@ export const Header: React.FC<HeaderProps> = ({
   onTriggerSimulation,
   onOpenEvals,
   onOpenAgentCore,
+  onOpenRuns,
   onRefresh,
   isRefreshing,
   autoRefresh,
@@ -107,6 +109,16 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           <span className="hidden sm:block w-px h-5 bg-ink-800 mx-1" aria-hidden="true" />
+
+          <button
+            type="button"
+            onClick={onOpenRuns}
+            className={`${btn.secondary} hidden md:inline-flex`}
+            title="Agent runs and traces: model calls, tool calls, timings"
+          >
+            <Activity className="w-3.5 h-3.5 text-ink-300" aria-hidden="true" />
+            Agent runs
+          </button>
 
           <button
             type="button"

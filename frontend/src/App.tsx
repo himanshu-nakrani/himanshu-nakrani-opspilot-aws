@@ -10,9 +10,10 @@ import { IncidentDetailModal } from './components/IncidentDetailModal';
 import { TriggerSimulationModal } from './components/TriggerSimulationModal';
 import { EvalsModal } from './components/EvalsModal';
 import { AgentCoreDrawer } from './components/AgentCoreDrawer';
+import { AgentRunsModal } from './components/AgentRunsModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
-type Overlay = { kind: 'incident'; incident: Incident } | { kind: 'trigger' } | { kind: 'evals' } | { kind: 'agentcore' } | null;
+type Overlay = { kind: 'incident'; incident: Incident } | { kind: 'trigger' } | { kind: 'evals' } | { kind: 'agentcore' } | { kind: 'runs' } | null;
 
 export const App: React.FC = () => {
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -45,6 +46,7 @@ export const App: React.FC = () => {
         onTriggerSimulation={() => setOverlay({ kind: 'trigger' })}
         onOpenEvals={() => setOverlay({ kind: 'evals' })}
         onOpenAgentCore={() => setOverlay({ kind: 'agentcore' })}
+        onOpenRuns={() => setOverlay({ kind: 'runs' })}
         onRefresh={data.refresh}
         isRefreshing={data.isManualRefreshing}
         autoRefresh={autoRefresh}
@@ -113,6 +115,7 @@ export const App: React.FC = () => {
         onBatchComplete={handleBatchComplete}
       />
       <EvalsModal isOpen={overlay?.kind === 'evals'} onClose={close} />
+      <AgentRunsModal isOpen={overlay?.kind === 'runs'} onClose={close} />
       <AgentCoreDrawer isOpen={overlay?.kind === 'agentcore'} onClose={close} stats={data.stats} />
     </div>
   );

@@ -30,6 +30,8 @@ from pydantic import BaseModel
 from opspilot.contracts import ContextBundle, RcaResult
 from opspilot.ingest import handle_alarm_event
 from opspilot.rca.agent import run_rca_agent
+from opspilot.agentcore.runtime import AgentCoreRuntime
+from dashboard.runs import build_agent_run, summarize as summarize_run
 from opspilot.route import route_rca
 from sample_service.app import app as sample_app
 from dashboard.scenarios import (
@@ -48,6 +50,24 @@ FRONTEND_DIST_PATH = REPO_ROOT / "frontend" / "dist"
 
 # Local in-memory incident cache for demo & offline mode
 LOCAL_INCIDENTS_CACHE: List[Dict[str, Any]] = []
+# Agent runs captured while the dashboard ran the RCA agent, keyed by run (session) id.
+AGENT_RUNS: Dict[str, Dict[str, Any]] = {}
+
+
+def _run_rca_with_trace(bundle: ContextBundle):
+    """Run the RCA agent and keep its AgentCore session so the dashboard can show the trace.
+
+    Uses the same Strands/AgentCore path as run_rca_agent; with OPSPILOT_AGENT_BACKEND=converse
+    (or if the runtime cannot start) it falls back to run_rca_agent and records no trace.
+    """
+    if os.environ.get("OPSPILOT_AGENT_BACKEND", "").lower() == "converse":
+        return run_rca_agent(bundle), None
+    try:
+        rca, session = AgentCoreRuntime().execute_rca(bundle)
+        return rca, session.to_dict()
+    except Exception as e:
+        logger.warning("AgentCore run failed for %s, falling back without a trace: %s", bundle.incident_id, e)
+        return run_rca_agent(bundle), None
 # Cap the demo cache so repeated simulations cannot grow memory without bound
 LOCAL_INCIDENTS_CACHE_MAX = 200
 
@@ -74,8 +94,15 @@ def seed_cache_from_fixtures():
             inc_id = bundle.get("incident_id", Path(path).stem)
 
             # Build mock incident record from fixture
-            rca_mock = run_rca_agent(ContextBundle.model_validate(bundle))
+            rca_mock, session = _run_rca_with_trace(ContextBundle.model_validate(bundle))
             route = route_rca(rca_mock)
+            run_id = None
+            if session:
+                run = build_agent_run(session, route=route, classification=rca_mock.classification,
+                                      confidence=rca_mock.confidence)
+                run["incident_id"] = inc_id
+                run_id = run["run_id"]
+                AGENT_RUNS[run_id] = run
 
             has_pr = route == "propose_fix"
             ticket_key = f"OPS-{stable_ticket_number(inc_id)}"
@@ -110,6 +137,7 @@ def seed_cache_from_fixtures():
                 "patch_diff": sample_patch,
                 "suggested_fix_strategy": rca_mock.suggested_fix_strategy,
                 "source": "fixture",
+                "agent_run_id": run_id,
             })
         except Exception as e:
             logger.warning("Could not load fixture %s into dashboard cache: %s", path, e)
@@ -368,6 +396,21 @@ EVAL_TARGETS = {
     "abstention_precision": 100.0,
     "evidence_ref_validity_rate": 95.0,
 }
+
+
+@dashboard_app.get("/api/runs")
+def list_agent_runs() -> List[Dict[str, Any]]:
+    """Agent runs recorded by this dashboard process, newest first (no span payloads)."""
+    runs = sorted(AGENT_RUNS.values(), key=lambda r: r.get("started_at") or "", reverse=True)
+    return [summarize_run(r) for r in runs]
+
+
+@dashboard_app.get("/api/runs/{run_id}")
+def get_agent_run(run_id: str) -> Dict[str, Any]:
+    run = AGENT_RUNS.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    return run
 
 
 @dashboard_app.get("/api/evals")

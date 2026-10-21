@@ -242,3 +242,55 @@ def test_different_scenarios_do_not_dedupe_but_repeats_do(monkeypatch):
 def test_unknown_scenario_is_rejected():
     with TestClient(dashboard_app) as c:
         assert c.post("/api/trigger", json={"scenario": "nope"}).status_code == 400
+
+
+# --- Agent runs and traces ---
+
+def test_fixture_incidents_record_agent_runs_with_spans():
+    with TestClient(dashboard_app) as c:
+        runs = c.get("/api/runs").json()
+        incidents = [i for i in c.get("/api/incidents").json() if i.get("source") == "fixture"]
+        assert runs, "seeded fixtures should record agent runs"
+        run_ids = {r["run_id"] for r in runs}
+        linked = [i for i in incidents if i.get("agent_run_id")]
+        assert linked and all(i["agent_run_id"] in run_ids for i in linked)
+        assert all("spans" not in r for r in runs)  # list is summaries only
+
+        run = c.get(f"/api/runs/{runs[0]['run_id']}").json()
+        kinds = {s["kind"] for s in run["spans"]}
+        assert {"cycle", "model", "tool"} <= kinds
+        tools = [s for s in run["spans"] if s["kind"] == "tool"]
+        assert len(tools) == run["tool_calls"]
+        assert all(s["duration_ms"] is not None and s["start_ms"] is not None for s in run["spans"])
+        ids = {s["id"] for s in run["spans"]}
+        assert all(s["parent_id"] is None or s["parent_id"] in ids for s in run["spans"])
+        assert run["offline_model"] is True  # no Bedrock in tests: UI must flag stand-in tokens
+
+
+def test_unknown_run_is_404():
+    with TestClient(dashboard_app) as c:
+        assert c.get("/api/runs/nope").status_code == 404
+
+
+def test_simulated_incidents_have_no_agent_run():
+    with TestClient(dashboard_app) as c:
+        res = c.post("/api/trigger", json={"scenario": "dependency_timeout"}).json()
+        inc = res.get("incident") or {}
+        assert not inc.get("agent_run_id")
+
+
+def test_build_spans_pairs_tool_history_and_flags_blocked_calls():
+    from dashboard.runs import build_spans
+    traces = [{"id": "c1", "name": "Cycle 1", "start_time": 10.0, "end_time": 10.5, "duration": 0.5, "children": [
+        {"id": "m1", "name": "stream_messages", "start_time": 10.0, "end_time": 10.1, "duration": 0.1,
+         "message": {"content": [{"toolUse": {"name": "get_file", "input": {"path": "x"}}}],
+                     "metadata": {"usage": {"inputTokens": 5, "outputTokens": 2}, "metrics": {"latencyMs": 9}}}},
+        {"id": "t1", "name": "Tool: get_file", "start_time": 10.1, "end_time": 10.2, "duration": 0.1,
+         "metadata": {"tool_name": "get_file"}},
+    ]}]
+    hist = [{"tool_name": "get_file", "input": {"path": "x"}, "output": "denied", "status": "policy_violation"}]
+    spans = build_spans(traces, hist)
+    model, tool = spans[1], spans[2]
+    assert model["input_tokens"] == 5 and "get_file" in model["output"]
+    assert tool["start_ms"] == 100.0 and tool["status"] == "error" and tool["policy_status"] == "policy_violation"
+    assert '"path": "x"' in tool["input"]

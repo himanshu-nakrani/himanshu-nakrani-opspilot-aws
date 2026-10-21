@@ -5,6 +5,7 @@ import { errorMessage, fetchIncident, isAbortError } from '../api';
 import { classificationBadge, confidenceTone, severityBadge, SOURCE_LABEL, statusBadge } from '../lib/badges';
 import { formatTimestamp, humanize } from '../lib/format';
 import { Modal } from './Modal';
+import { AgentTrace } from './AgentTrace';
 
 interface IncidentDetailModalProps {
   incident: Incident | null;
@@ -153,6 +154,19 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
           </pre>
         </section>
       )}
+
+      <section>
+        <h3 className={sectionTitle}>Agent trace</h3>
+        {incident.agent_run_id ? (
+          <AgentTrace runId={incident.agent_run_id} compact />
+        ) : (
+          <p className="text-xs text-ink-400">
+            {incident.source === 'simulated'
+              ? 'No agent run: this root cause is scripted by the simulation scenario.'
+              : 'No agent trace was recorded for this incident.'}
+          </p>
+        )}
+      </section>
 
       {(incident.ticket_key || incident.pr_branch) && (
         <section className="flex flex-wrap gap-3 text-xs">
