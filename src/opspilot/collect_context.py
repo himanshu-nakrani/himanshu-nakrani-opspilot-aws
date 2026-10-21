@@ -170,7 +170,49 @@ def get_repo_context(
         except Exception as e:
             logger.warning("Git log failed for %s: %s", frame.file, e)
 
+    # In Lambda the repo checkout is not bundled: read source and history from
+    # AWS CodeCommit through the function's IAM role instead (best effort).
+    missing = [f for f in seen_files if f not in repo_files]
+    if (missing or not recent_commits) and _use_codecommit():
+        cc_files, cc_commits = _codecommit_context(sorted(seen_files), missing)
+        repo_files.update(cc_files)
+        if not recent_commits:
+            recent_commits = cc_commits
+
     return repo_files, recent_commits
+
+
+def _use_codecommit() -> bool:
+    return (
+        os.environ.get("SCM_PROVIDER", "codecommit").lower() == "codecommit"
+        and bool(os.environ.get("CODECOMMIT_REPO"))
+    )
+
+
+def _codecommit_context(
+    files: List[str], missing: List[str], client: Any = None
+) -> tuple[Dict[str, str], List[Dict[str, str]]]:
+    from opspilot.fix.codecommit import CodeCommitClient
+
+    out_files: Dict[str, str] = {}
+    out_commits: List[Dict[str, str]] = []
+    ref = os.environ.get("CODECOMMIT_BRANCH", "main")
+    try:
+        cc = CodeCommitClient(client=client)
+    except Exception as e:
+        logger.warning("CodeCommit client unavailable: %s", e)
+        return out_files, out_commits
+    for f in missing:
+        try:
+            out_files[f] = cc.get_file(f, ref)
+        except Exception as e:
+            logger.warning("CodeCommit get_file %s failed: %s", f, e)
+    for f in files:
+        try:
+            out_commits.extend(cc.recent_commits_for_path(f, ref=ref, limit=3))
+        except Exception as e:
+            logger.warning("CodeCommit history for %s failed: %s", f, e)
+    return out_files, out_commits
 
 
 def collect_context_bundle(

@@ -23,6 +23,13 @@ phases:
       - echo "=== Phase 1: repro test must FAIL on base ($BASE_REF) ==="
       # The repro test only exists on the fix branch: carry it over to the base checkout.
       - cp "$REPRO_TEST" /tmp/repro_test.py
+      # CodeCommit source: fetch over HTTPS with the build role via the AWS CLI credential helper.
+      - |
+        if [ -n "${CODECOMMIT_CLONE_URL:-}" ]; then
+          git config --global credential.helper '!aws codecommit credential-helper $@'
+          git config --global credential.UseHttpPath true
+          git remote get-url origin >/dev/null 2>&1 && git remote set-url origin "$CODECOMMIT_CLONE_URL" || git remote add origin "$CODECOMMIT_CLONE_URL"
+        fi
       - git fetch --no-tags origin "$BASE_REF"
       - git checkout --quiet FETCH_HEAD
       - mkdir -p "$(dirname "$REPRO_TEST")" && cp /tmp/repro_test.py "$REPRO_TEST"

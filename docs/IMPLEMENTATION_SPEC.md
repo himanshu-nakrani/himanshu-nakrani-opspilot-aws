@@ -20,7 +20,7 @@ sample_service/        FastAPI-on-Lambda (Mangum) app with GET /orders/{id};
                        + its own tests/ (pass on main; no test covers the bug)
 statemachine/opspilot.asl.json
 evals/fixtures/*.json  recorded context bundles + gold labels; evals/run_evals.py
-tests/                 unit tests for every module (Bedrock/Jira/GitHub mocked)
+tests/                 unit tests for every module (Bedrock/Jira/CodeCommit mocked)
 Makefile               make test | make deploy | make trigger-incident | make eval
 .env.example
 ```
@@ -42,8 +42,8 @@ Makefile               make test | make deploy | make trigger-incident | make ev
 ```
 AWS_REGION=
 BEDROCK_MODEL_ID=            # current Claude Sonnet model / inference profile in your region
-GITHUB_REPO=owner/name       # repo the patch agent targets (this repo for the POC)
-GITHUB_TOKEN_SECRET_ARN=     # fine-grained PAT: contents+pull_requests on that repo only
+SCM_PROVIDER=codecommit      # default; github is a local-dev-only fallback
+CODECOMMIT_REPO=opspilot-aws # CodeCommit repo the patch agent targets (IAM auth, no token)
 JIRA_BASE_URL=  JIRA_EMAIL=  JIRA_PROJECT_KEY=  JIRA_TOKEN_SECRET_ARN=
 SLACK_WEBHOOK_SECRET_ARN=    NOTIFY_EMAIL=
 RCA_MAX_TURNS=6  RCA_CONFIDENCE_THRESHOLD=0.6  DEDUP_WINDOW_MIN=15

@@ -13,7 +13,7 @@ Everything (CoreStack, SampleServiceStack, PipelineStack) deploys with one comma
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-cp .env.deploy.example .env.deploy      # fill in AWS_PROFILE/AWS_REGION, Jira URL, tokens
+cp .env.deploy.example .env.deploy      # fill in AWS_PROFILE/AWS_REGION, CODECOMMIT_REPO, Jira URL
 bash scripts/deploy.sh                       # or: make deploy
 ```
 
@@ -21,18 +21,19 @@ bash scripts/deploy.sh                       # or: make deploy
 
 | Step | What it does |
 |---|---|
-| preflight | Python 3.10+, Node 18+, CDK libs, pip/uv; reads the AWS account and region from STS; checks GITHUB_REPO and JIRA_BASE_URL; warns if the Bedrock model is not enabled |
+| preflight | Python 3.10+, Node 18+, CDK libs, pip/uv; reads the AWS account and region from STS; checks CODECOMMIT_REPO (and whether it already exists, so it is imported instead of re-created) and JIRA_BASE_URL; warns if the Bedrock model is not enabled |
 | bootstrap | Runs `cdk bootstrap aws://<account>/<region>` only if the CDKToolkit stack is missing |
 | synth | Bundles every Lambda for Linux/cp312 (no Docker) and writes cdk.out/ |
 | deploy | `cdk deploy --all`; stack outputs go to cdk-outputs.json |
-| secrets | Writes JIRA_API_TOKEN, GITHUB_TOKEN and SLACK_WEBHOOK_URL into opspilot/jira, opspilot/github and opspilot/slack. Blank values are skipped |
-| verify | Checks the 3 stacks, 9 Lambdas, the opspilot state machine, the EventBridge rule and its target, the 6 alarms and the 3 secrets, then calls GET /health and GET /faults on the live service |
+| seed | Pushes the files tracked in this checkout to the CodeCommit repo's `main` using the CodeCommit API (boto3 + your IAM identity; no git credentials, no AWS CLI). Skipped if `main` already exists; `RESEED=1` pushes the current checkout on top |
+| secrets | Writes JIRA_API_TOKEN and SLACK_WEBHOOK_URL into opspilot/jira and opspilot/slack. Blank values are skipped. No GitHub token is needed |
+| verify | Checks the 3 stacks, 9 Lambdas, the opspilot state machine, the EventBridge rule and its target, the 6 alarms, the 2 secrets and the CodeCommit repo (main branch, buildspec and sample service present), then calls GET /health and GET /faults on the live service |
 
 Other commands: `preflight`, `synth` (`OFFLINE=1` synthesizes without AWS credentials), `diff`,
-`secrets`, `verify`, `outputs`, `dashboard` (builds the frontend and serves the OpsPilot
+`seed`, `secrets`, `verify`, `outputs`, `dashboard` (builds the frontend and serves the OpsPilot
 dashboard on :8000) and `destroy`. `bash scripts/deploy.sh help` lists them. Neither Docker nor the AWS CLI is needed.
 
-Settings that become Lambda environment values (GITHUB_REPO, JIRA_BASE_URL, JIRA_PROJECT_KEY,
+Settings that become Lambda environment values (CODECOMMIT_REPO, JIRA_BASE_URL, JIRA_PROJECT_KEY,
 JIRA_EMAIL, BEDROCK_MODEL_ID) are read at synth time. If you change one, run deploy again. Secrets
 can be changed at any time with `bash scripts/deploy.sh secrets`.
 
@@ -64,7 +65,7 @@ curl -s "$SAMPLE_SERVICE_URL/orders/999"               # raw trigger
 ```
 
 Timeline: the alarm moves to ALARM about 1-2 min after the burst. The execution
-starts within seconds of that. Then check the OpsPilot dashboard, Jira and GitHub.
+starts within seconds of that. Then check the OpsPilot dashboard, Jira and the CodeCommit console (Repositories → opspilot-aws → Pull requests).
 
 ## Notes and limits
 - Run **one scenario at a time**. CollectContext reads the whole service log group.
