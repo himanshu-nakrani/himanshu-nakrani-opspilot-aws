@@ -162,15 +162,9 @@ export const AgentTrace: React.FC<AgentTraceProps> = ({ runId, compact = false }
         <div className={`${GRID} px-3 py-1.5 bg-ink-950/60 border-b border-ink-800 text-2xs uppercase tracking-[0.1em] text-ink-400`}>
           <span>Span</span>
           <span className="relative h-4 font-mono normal-case tracking-normal tnum" aria-hidden="true">
-            {TICKS.map((t) => (
-              <span
-                key={t}
-                className={`absolute top-0 ${t === 0 ? '' : t === 100 ? '-translate-x-full' : '-translate-x-1/2 hidden sm:inline'}`}
-                style={{ left: `${t}%` }}
-              >
-                {t === 0 ? '0' : formatMs((total * t) / 100)}
-              </span>
-            ))}
+            {/* The timeline column can be ~75px in the side panel: label only the ends; quarter gridlines carry the scale. */}
+            <span className="absolute left-0 top-0">0</span>
+            <span className="absolute right-0 top-0 whitespace-nowrap">{formatMs(total)}</span>
           </span>
           <span className="text-right">Duration</span>
         </div>
