@@ -23,7 +23,7 @@ One command deploys the whole stack (core, sample service with planted faults, p
 
 ```bash
 cp .env.deploy.example .env.deploy   # AWS profile/region, Jira, tokens
-scripts/deploy.sh                    # preflight -> bootstrap -> synth -> deploy -> secrets -> verify
+bash scripts/deploy.sh                    # preflight -> bootstrap -> synth -> deploy -> secrets -> verify
 ```
 
 See docs/DEMO_RUNBOOK.md for every subcommand and the demo flow.

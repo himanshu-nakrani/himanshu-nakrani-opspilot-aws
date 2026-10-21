@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # OpsPilot one-shot deploy: CoreStack + SampleServiceStack + PipelineStack.
 #
-#   scripts/deploy.sh                # = up: preflight -> bootstrap -> synth -> deploy -> secrets -> verify
-#   scripts/deploy.sh preflight      # tools, Python deps, AWS identity, config, Bedrock access
-#   scripts/deploy.sh synth          # build Lambda assets + CloudFormation into cdk.out (no AWS writes)
-#   scripts/deploy.sh diff           # what would change in the account
-#   scripts/deploy.sh secrets        # (re)write Jira / GitHub / Slack secrets from env
-#   scripts/deploy.sh verify         # post-deploy smoke test (stacks, Lambdas, wiring, alarms, live URL)
-#   scripts/deploy.sh outputs        # print stack outputs
-#   scripts/deploy.sh dashboard      # build the frontend and run the OpsPilot dashboard locally
-#   scripts/deploy.sh destroy        # tear everything down (asks first unless YES=1)
+#   bash scripts/deploy.sh                # = up: preflight -> bootstrap -> synth -> deploy -> secrets -> verify
+#   bash scripts/deploy.sh preflight      # tools, Python deps, AWS identity, config, Bedrock access
+#   bash scripts/deploy.sh synth          # build Lambda assets + CloudFormation into cdk.out (no AWS writes)
+#   bash scripts/deploy.sh diff           # what would change in the account
+#   bash scripts/deploy.sh secrets        # (re)write Jira / GitHub / Slack secrets from env
+#   bash scripts/deploy.sh verify         # post-deploy smoke test (stacks, Lambdas, wiring, alarms, live URL)
+#   bash scripts/deploy.sh outputs        # print stack outputs
+#   bash scripts/deploy.sh dashboard      # build the frontend and run the OpsPilot dashboard locally
+#   bash scripts/deploy.sh destroy        # tear everything down (asks first unless YES=1)
 #
 # Config comes from the environment or a .env.deploy file at the repo root
 # (see .env.deploy.example). Nothing here needs the AWS CLI or Docker.
@@ -106,8 +106,8 @@ next_steps() {
 ${c_grn}Deployed.${c_off} Next:
   python3 scripts/demo_faults.py list
   python3 scripts/demo_faults.py orders --watch     # alarm in ~1-2 min, then the OpsPilot run
-  scripts/deploy.sh dashboard                        # local OpsPilot dashboard on :8000
-Tear down after the demo: scripts/deploy.sh destroy
+  bash scripts/deploy.sh dashboard                        # local OpsPilot dashboard on :8000
+Tear down after the demo: bash scripts/deploy.sh destroy
 TXT
 }
 
@@ -143,5 +143,5 @@ case "$cmd" in
   dashboard) dashboard ;;
   destroy)   destroy ;;
   -h|--help|help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) die "unknown command '$cmd' (try: scripts/deploy.sh help)" ;;
+  *) die "unknown command '$cmd' (try: bash scripts/deploy.sh help)" ;;
 esac
