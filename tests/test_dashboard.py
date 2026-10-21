@@ -9,9 +9,44 @@ from dashboard.app import dashboard_app, seed_cache_from_fixtures
 client = TestClient(dashboard_app)
 
 
+class _NoLiveAws:
+    """Dashboard tests must not start a verify build or read the live pipeline."""
+
+    def start_build(self, **kwargs):
+        raise AssertionError("live CodeBuild")
+
+    def batch_get_builds(self, **kwargs):
+        raise AssertionError("live CodeBuild")
+
+    def list_pipeline_executions(self, **kwargs):
+        raise AssertionError("live CodePipeline")
+
+    def get_pipeline_state(self, **kwargs):
+        raise AssertionError("live CodePipeline")
+
+
+def _begin_without_aws(pr, rca, codebuild_client=None):
+    from opspilot.fix.agent import repro_pytest_node
+
+    return {
+        "test_status": "running",
+        "test_name": repro_pytest_node(rca, pr.repro_test_path),
+        "test_summary": "Verification test is running.",
+        "test_log": "",
+        "test_build_id": "",
+        "test_error": None,
+        "test_comment_posted": "",
+    }
+
+
 @pytest.fixture(autouse=True)
-def setup_dashboard():
+def setup_dashboard(monkeypatch):
     seed_cache_from_fixtures()
+    import dashboard.app as app_mod
+
+    monkeypatch.setattr(app_mod, "get_codebuild_client", lambda: _NoLiveAws())
+    monkeypatch.setattr(app_mod, "get_pipeline_client", lambda: _NoLiveAws())
+    monkeypatch.setattr(app_mod, "begin_pr_verification", _begin_without_aws)
 
 
 def test_tickets_page_lists_open_opscenter_items(monkeypatch):
@@ -237,11 +272,17 @@ def test_every_scenario_simulates_and_matches_router(monkeypatch):
             if route == "propose_fix":
                 assert inc["status"] == "AWAITING_CHOICE", sid
                 assert inc["patch_diff"], sid
+                assert inc["can_raise_pr"] is True, sid
+                assert inc["human_ending"] is None, sid
                 assert inc["pr_branch"] is None, sid
             else:
                 assert inc["status"] == "NOTIFIED", sid
                 assert inc["patch_diff"] is None and inc["pr_branch"] is None, sid
+                assert inc["can_raise_pr"] is False, sid
+                assert inc["human_ending"], sid
+                assert "A person has to handle this." in inc["human_ending"], sid
             assert inc["pr_url"] is None
+            assert inc.get("test_status") is None and inc.get("deploy_status") is None, sid
 
 
 def test_catalogue_has_both_routes():
@@ -299,6 +340,33 @@ def test_different_scenarios_do_not_dedupe_but_repeats_do(monkeypatch):
     assert again["status"] == "DUPLICATE_SKIPPED"
 
 
+def test_planted_faults_end_as_a_patch_or_a_person(monkeypatch):
+    """Checkout and the legacy payment delay can raise a PR. Inventory and the export cannot."""
+    import dashboard.app as app_mod
+
+    seq = {"n": 0}
+
+    def started(_event):
+        seq["n"] += 1
+        return {"status": "started", "incident_id": f"inc-ending-{seq['n']}"}
+
+    monkeypatch.setattr(app_mod, "handle_alarm_event", started)
+    with TestClient(dashboard_app) as c:
+        coupon = c.post("/api/trigger", json={"scenario": "unknown_coupon"}).json()["incident"]
+        legacy = c.post("/api/trigger", json={"scenario": "legacy_payment"}).json()["incident"]
+        inventory = c.post("/api/trigger", json={"scenario": "inventory_timeout"}).json()["incident"]
+        report = c.post("/api/trigger", json={"scenario": "report_export"}).json()["incident"]
+        orders = c.get("/api/incidents/inc-eval-01").json()
+    assert coupon["can_raise_pr"] is True and "invalid coupon" in coupon["patch_diff"]
+    assert coupon["human_ending"] is None and coupon.get("test_status") is None
+    assert legacy["can_raise_pr"] is True and "pass" in legacy["patch_diff"]
+    assert inventory["can_raise_pr"] is False and inventory["patch_diff"] is None
+    assert "database timeout" in inventory["human_ending"]
+    assert report["can_raise_pr"] is False and "export runs out of memory" in report["human_ending"]
+    assert orders["can_raise_pr"] is True and orders["human_ending"] is None
+    assert orders.get("pr_url") is None and orders.get("deploy_status") is None and orders.get("test_status") is None
+
+
 def test_fixture_diffs_match_the_suspected_function():
     """Seeded create_order incidents must not be offered the planted get_order patch."""
     with TestClient(dashboard_app) as c:
@@ -327,10 +395,10 @@ def test_authored_diff_without_a_generator_hides_raise_pr():
         "classification": "code_defect",
         "confidence": 0.9,
         "severity": "sev2",
-        "summary": "Unknown coupon is indexed without a check.",
-        "suspected_location": {"file": "sample_service/faults.py", "line": 177, "function": "checkout"},
-        "evidence": [{"kind": "stack_frame", "ref": "sample_service/faults.py:177", "claim": "COUPONS[coupon]"}],
-        "suggested_fix_strategy": "Return 400 for an unknown coupon.",
+        "summary": "Inventory lookup for BULK-42 hits a database timeout.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 112, "function": "inventory"},
+        "evidence": [{"kind": "log_line", "ref": "log-1", "claim": "InventoryDbTimeout"}],
+        "suggested_fix_strategy": "A person has to look at the inventory database.",
         "patch_diff": "--- a/sample_service/faults.py\n+++ b/sample_service/faults.py\n@@ -1 +1 @@\n-old\n+new\n",
         "pr_url": None,
         "source": "fixture",
@@ -339,6 +407,8 @@ def test_authored_diff_without_a_generator_hides_raise_pr():
         body = c.get(f"/api/incidents/{inc_id}").json()
         assert "faults.py" in body["patch_diff"]
         assert body["can_raise_pr"] is False
+        assert "database timeout" in body["human_ending"]
+        assert body.get("test_status") is None and body.get("deploy_status") is None
         refused = c.post(f"/api/incidents/{inc_id}/fix-choice", json={"action": "raise_pr"})
         assert refused.status_code == 400
         assert "No fix generator" not in refused.text
@@ -354,7 +424,7 @@ def test_unknown_scenario_is_rejected():
 
 
 def test_fix_choice_apply_myself_or_raise_pr(monkeypatch):
-    """The incident offers the diff first. Apply-myself opens nothing. Raise PR opens one."""
+    """Apply-myself can still raise a PR. A second raise after that PR is open is refused."""
     import dashboard.app as app_mod
     from opspilot.contracts import PrRef
 
@@ -385,7 +455,30 @@ def test_fix_choice_apply_myself_or_raise_pr(monkeypatch):
         assert manual.status_code == 200
         assert manual.json()["status"] == "APPLY_MYSELF"
         assert manual.json()["pr_url"] is None
+        assert manual.json()["can_raise_pr"] is True
+        assert c.get(f"/api/incidents/{first['incident_id']}/pr-status").status_code == 404
+
+        changed_mind = c.post(f"/api/incidents/{first['incident_id']}/fix-choice", json={"action": "raise_pr"})
+        assert changed_mind.status_code == 200, changed_mind.text
+        opened_later = changed_mind.json()
+        assert opened_later["status"] == "PR_OPENED"
+        assert opened_later["pr_url"] == "https://codecommit.example/pr/9"
+        assert opened_later["pr_number"] == 9
+        assert opened_later["can_raise_pr"] is False
         assert c.post(f"/api/incidents/{first['incident_id']}/fix-choice", json={"action": "raise_pr"}).status_code == 409
+
+        class FakeScm:
+            def get_pull_request_status(self, pr_id):
+                assert str(pr_id) == "9"
+                return {"pr_number": 9, "status": "open", "pull_request_status": "OPEN", "is_merged": None}
+
+        monkeypatch.setattr(app_mod, "get_scm_client", lambda: FakeScm())
+        live = c.get(f"/api/incidents/{first['incident_id']}/pr-status")
+        assert live.status_code == 200, live.text
+        assert live.json()["status"] == "open"
+        assert live.json()["pull_request_status"] == "OPEN"
+        assert live.json()["error"] is None
+        assert live.json()["pr_url"] == "https://codecommit.example/pr/9"
 
         second = c.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
         assert "status_code=404" in second["patch_diff"] and second["can_raise_pr"] is True
@@ -396,6 +489,10 @@ def test_fix_choice_apply_myself_or_raise_pr(monkeypatch):
         assert opened["pr_url"] == "https://codecommit.example/pr/9"
         assert opened["pr_branch"].startswith("opspilot/")
         assert opened["patch_diff"]
+        assert opened["test_status"] == "running"
+        assert opened["deploy_status"] == "not_started"
+        assert opened["human_ending"] is None
+        assert "deploy has not started" in (opened.get("deploy_summary") or "")
 
         missing = c.post("/api/trigger", json={"scenario": "missing_field"}).json()["incident"]
         assert missing["suspected_location"]["function"] == "create_order"
@@ -423,6 +520,170 @@ def test_fix_choice_apply_myself_or_raise_pr(monkeypatch):
         notified = c.post("/api/trigger", json={"scenario": "config_env"}).json()["incident"]
         assert notified["can_raise_pr"] is False
         assert c.post(f"/api/incidents/{notified['incident_id']}/fix-choice", json={"action": "raise_pr"}).status_code == 400
+
+
+def _pr_incident(inc_id: str, pr_url: str, pr_number: int = 9) -> None:
+    from dashboard.app import LOCAL_INCIDENTS_CACHE
+
+    LOCAL_INCIDENTS_CACHE.insert(0, {
+        "incident_id": inc_id,
+        "service": "sample-service",
+        "detected_at": "2026-10-21T00:00:00+00:00",
+        "status": "PR_OPENED",
+        "classification": "code_defect",
+        "confidence": 0.9,
+        "severity": "sev2",
+        "summary": "Suggested fix",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 177, "function": "checkout"},
+        "evidence": [],
+        "suggested_fix_strategy": "Apply the diff.",
+        "patch_diff": "--- a/sample_service/faults.py\n+++ b/sample_service/faults.py\n@@ -1 +1 @@\n-old\n+new\n",
+        "pr_url": pr_url,
+        "pr_number": pr_number,
+        "pr_branch": "opspilot/OPS-1",
+        "source": "fixture",
+    })
+
+
+def test_fixture_branch_name_is_not_a_pull_request():
+    """inc-eval-01 is a fixture. A branch label without an http link is not a CodeCommit PR."""
+    from dashboard.app import LOCAL_INCIDENTS_CACHE
+
+    with TestClient(dashboard_app) as c:
+        seeded = c.get("/api/incidents/inc-eval-01").json()
+        assert seeded["status"] == "AWAITING_CHOICE"
+        assert seeded["ticket_key"] == "OPS-342"
+        assert seeded["can_raise_pr"] is True
+        assert seeded.get("pr_url") is None
+        assert seeded.get("pr_branch") is None
+        assert c.get("/api/incidents/inc-eval-01/pr-status").status_code == 404
+
+    LOCAL_INCIDENTS_CACHE.insert(0, {
+        "incident_id": "inc-branch-label",
+        "service": "sample-service",
+        "detected_at": "2026-10-21T00:00:00+00:00",
+        "status": "PR_OPENED",
+        "classification": "code_defect",
+        "confidence": 0.9,
+        "severity": "sev2",
+        "summary": "missing order",
+        "suspected_location": {"file": "sample_service/app.py", "line": 29, "function": "get_order"},
+        "evidence": [{"kind": "stack_frame", "ref": "sample_service/app.py:29", "claim": "order.total"}],
+        "suggested_fix_strategy": "Return 404 when the order is missing.",
+        "patch_diff": "--- a/sample_service/app.py\n+++ b/sample_service/app.py\n@@ -1 +1 @@\n-old\n+new\n",
+        "ticket_key": "OPS-342",
+        "pr_branch": "opspilot/OPS-342",
+        "pr_url": "opspilot/OPS-342",
+        "source": "fixture",
+    })
+    with TestClient(dashboard_app) as c:
+        body = c.get("/api/incidents/inc-branch-label").json()
+        assert body["pr_url"] is None
+        assert body["pr_branch"] is None
+        assert body["can_raise_pr"] is True
+        refused = c.get("/api/incidents/inc-branch-label/pr-status")
+        assert refused.status_code == 404
+        assert "pr-status" not in refused.json()["detail"]
+
+
+def test_pr_status_reports_last_known_when_codecommit_is_unreachable(monkeypatch):
+    import dashboard.app as app_mod
+
+    inc_id = "inc-pr-status-down"
+    pr_url = "https://codecommit.example/pr/9"
+    _pr_incident(inc_id, pr_url)
+
+    class Down:
+        def get_pull_request_status(self, pr_id):
+            assert str(pr_id) == "9"
+            raise RuntimeError("Could not connect to CodeCommit")
+
+    monkeypatch.setattr(app_mod, "get_scm_client", lambda: Down())
+    with TestClient(dashboard_app) as c:
+        body = c.get(f"/api/incidents/{inc_id}/pr-status")
+    assert body.status_code == 200, body.text
+    payload = body.json()
+    assert payload["status"] == "opened"
+    assert payload["pr_url"] == pr_url
+    assert payload["pull_request_status"] is None
+    assert payload["is_merged"] is None
+    assert payload["error"] == "CodeCommit could not be reached."
+    assert "pr-status" not in payload["error"]
+    assert "no pull request" not in payload["error"]
+
+    monkeypatch.setattr(app_mod, "get_scm_client", lambda: object())
+    with TestClient(dashboard_app) as c:
+        missing = c.get(f"/api/incidents/{inc_id}/pr-status")
+    assert missing.status_code == 200
+    assert missing.json()["status"] == "opened"
+    assert missing.json()["pr_url"] == pr_url
+    assert missing.json()["error"] == "CodeCommit could not be reached."
+    assert "/incidents/" not in missing.json()["error"]
+
+
+def test_pr_status_reads_the_repo_in_the_codecommit_url(monkeypatch):
+    import dashboard.app as app_mod
+
+    inc_id = "inc-pr-status-url"
+    pr_url = (
+        "https://us-east-1.console.aws.amazon.com/codesuite/codecommit/repositories/"
+        "opspilot-sample-service/pull-requests/15/details?region=us-east-1"
+    )
+    _pr_incident(inc_id, pr_url, pr_number=15)
+    created = {}
+
+    class FakeClient:
+        def __init__(self, repo, client=None, region=None):
+            created["repo"] = repo
+            created["region"] = region
+
+        def get_pull_request_status(self, pr_id):
+            created["pr_id"] = str(pr_id)
+            return {"pr_number": 15, "status": "merged", "pull_request_status": "CLOSED", "is_merged": True}
+
+    def refuse_default_client():
+        raise AssertionError("console URL should use CodeCommitClient")
+
+    monkeypatch.setattr("opspilot.fix.codecommit.CodeCommitClient", FakeClient)
+    monkeypatch.setattr(app_mod, "get_scm_client", refuse_default_client)
+    with TestClient(dashboard_app) as c:
+        body = c.get(f"/api/incidents/{inc_id}/pr-status")
+    assert body.status_code == 200, body.text
+    assert body.json()["status"] == "merged"
+    assert body.json()["error"] is None
+    assert body.json()["is_merged"] is True
+    assert created == {"repo": "opspilot-sample-service", "region": "us-east-1", "pr_id": "15"}
+
+
+def test_second_raise_after_pr_opened_is_refused(monkeypatch):
+    """A pull request that is already recorded cannot be opened again."""
+    import dashboard.app as app_mod
+    from opspilot.contracts import PrRef
+
+    calls = {"n": 0}
+
+    def fake_propose(rca, ticket, **kwargs):
+        calls["n"] += 1
+        return PrRef(
+            branch=f"opspilot/{ticket.key}",
+            base="main",
+            repro_test_path="sample_service/tests/test_get_order_repro.py",
+            pr_url="https://codecommit.example/pr/11",
+            pr_number=11,
+        )
+
+    monkeypatch.setattr(app_mod, "handle_alarm_event", lambda _event: {"status": "started", "incident_id": "inc-choice-once"})
+    monkeypatch.setattr(app_mod, "propose_fix", fake_propose)
+    with TestClient(dashboard_app) as c:
+        inc = c.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
+        applied = c.post(f"/api/incidents/{inc['incident_id']}/fix-choice", json={"action": "apply_myself"})
+        assert applied.status_code == 200
+        raised = c.post(f"/api/incidents/{inc['incident_id']}/fix-choice", json={"action": "raise_pr"})
+        assert raised.status_code == 200, raised.text
+        assert raised.json()["status"] == "PR_OPENED"
+        again = c.post(f"/api/incidents/{inc['incident_id']}/fix-choice", json={"action": "raise_pr"})
+        assert again.status_code == 409
+    assert calls["n"] == 1
 
 
 # --- Agent runs and traces ---

@@ -16,28 +16,18 @@
 # (see .env.deploy.example). Nothing here needs the AWS CLI or Docker.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
-
-[[ -f .env.deploy ]] && { set -a; source .env.deploy; set +a; }
-
-PY="${PYTHON:-python3}"
-CDK="npx -y aws-cdk@2"
-# Run the CDK app with the same interpreter as the checks (cdk.json hardcodes python3, which may not be the venv).
-CDK_APP=(--app "$PY infra/app.py")
-export PYTHONPATH="src:.${PYTHONPATH:+:$PYTHONPATH}"
-# jsii refuses a group-writable ~/.cache; a private cache dir avoids that.
-export JSII_RUNTIME_PACKAGE_CACHE_ROOT="${JSII_RUNTIME_PACKAGE_CACHE_ROOT:-/tmp/jsii-cache-$(id -u)}"
-# Source control is AWS CodeCommit (IAM auth, no tokens). CoreStack creates the repo, or imports it if it exists.
-export CODECOMMIT_REPO="${CODECOMMIT_REPO:-opspilot-aws}"
-export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-us.anthropic.claude-haiku-5-5}"
-OUTPUTS_FILE="$ROOT/cdk-outputs.json"
-
 c_blue=$'\033[34m'; c_red=$'\033[31m'; c_yel=$'\033[33m'; c_grn=$'\033[32m'; c_off=$'\033[0m'
 step() { echo; echo "${c_blue}==>${c_off} $*"; }
 die()  { echo "${c_red}ERROR:${c_off} $*" >&2; exit 1; }
 warn() { echo "  ${c_yel}WARN${c_off} $*"; }
 pass() { echo "  ${c_grn}PASS${c_off} $*"; }
+
+# Unset -> 0 so CoreStack keeps the repo. Never overwrite a value the operator already exported.
+apply_codecommit_repo_exists_default() {
+  if [[ -z "${CODECOMMIT_REPO_EXISTS+x}" ]]; then
+    export CODECOMMIT_REPO_EXISTS=0
+  fi
+}
 
 resolve_env() {
   # app.py falls back to a fake account (123456789012) without these, so always set them from STS.
@@ -47,10 +37,8 @@ resolve_env() {
   export CDK_DEFAULT_ACCOUNT="${who% *}"
   export CDK_DEFAULT_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-${who#* }}}"
   export AWS_REGION="$CDK_DEFAULT_REGION" AWS_DEFAULT_REGION="$CDK_DEFAULT_REGION"
-  # A repo kept from an earlier deploy (RETAIN) or pre-created by the event team is imported, not re-created.
-  if [[ -z "${CODECOMMIT_REPO_EXISTS:-}" ]]; then
-    if "$PY" scripts/deploy_check.py repo-status; then export CODECOMMIT_REPO_EXISTS=1; else export CODECOMMIT_REPO_EXISTS=0; fi
-  fi
+  # Do not probe CodeCommit. Importing an existing repo detaches it from CoreStack.
+  apply_codecommit_repo_exists_default
 }
 
 preflight() {
@@ -73,9 +61,9 @@ preflight() {
 
   [[ "$CODECOMMIT_REPO" =~ ^[A-Za-z0-9_.-]{1,100}$ ]] || die "CODECOMMIT_REPO must be a CodeCommit repo name (got '$CODECOMMIT_REPO')"
   if [[ "${CODECOMMIT_REPO_EXISTS:-}" == 1 ]]; then
-    pass "CodeCommit repo $CODECOMMIT_REPO exists; CoreStack will import it"
+    pass "CoreStack will import CodeCommit repo $CODECOMMIT_REPO"
   else
-    pass "CodeCommit repo $CODECOMMIT_REPO will be created by CoreStack"
+    pass "CoreStack will own CodeCommit repo $CODECOMMIT_REPO"
   fi
   "$PY" scripts/deploy_check.py opscenter
   "$PY" scripts/deploy_check.py bedrock
@@ -133,8 +121,33 @@ destroy() {
   fi
   $CDK destroy "${CDK_APP[@]}" --all --force
   echo "Note: Secrets Manager keeps opspilot/* secrets for a 7-30 day recovery window."
-  echo "Note: CodeCommit repo $CODECOMMIT_REPO is retained (fix PRs survive); the next deploy imports it."
+  echo "Note: CodeCommit repo $CODECOMMIT_REPO is retained (fix PRs survive). A later deploy keeps it in CoreStack unless CODECOMMIT_REPO_EXISTS was already exported as 1."
 }
+
+# Sourcing this file (tests) loads functions only: no .env.deploy, no deploy command.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+[[ -f .env.deploy ]] && { set -a; source .env.deploy; set +a; }
+
+PY="${PYTHON:-python3}"
+CDK="npx -y aws-cdk@2"
+# Run the CDK app with the same interpreter as the checks (cdk.json hardcodes python3, which may not be the venv).
+CDK_APP=(--app "$PY infra/app.py")
+export PYTHONPATH="src:.${PYTHONPATH:+:$PYTHONPATH}"
+# jsii refuses a group-writable ~/.cache; a private cache dir avoids that.
+export JSII_RUNTIME_PACKAGE_CACHE_ROOT="${JSII_RUNTIME_PACKAGE_CACHE_ROOT:-/tmp/jsii-cache-$(id -u)}"
+# Source control is AWS CodeCommit (IAM auth, no tokens). CoreStack owns the repo.
+# An unset CODECOMMIT_REPO_EXISTS becomes 0. Export 1 before running this script to import instead.
+export CODECOMMIT_REPO="${CODECOMMIT_REPO:-opspilot-aws}"
+export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-us.anthropic.claude-haiku-5-5}"
+OUTPUTS_FILE="$ROOT/cdk-outputs.json"
+
+apply_codecommit_repo_exists_default
 
 cmd="${1:-up}"
 case "$cmd" in

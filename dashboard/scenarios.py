@@ -9,7 +9,7 @@ does not open the pull request; the incident screen does. Everything else notifi
 
 from typing import Any, Dict, List, Optional
 
-from opspilot.fix.agent import CREATE_ORDER_PATCH, GET_ORDER_PATCH
+from opspilot.fix.agent import CHECKOUT_PATCH, CREATE_ORDER_PATCH, GET_ORDER_PATCH, PAYMENTS_PATCH
 
 DEFAULT_SCENARIO = "null_order"
 
@@ -48,6 +48,70 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         ],
         "patch_diff": CREATE_ORDER_PATCH,
         "suggested_fix_strategy": "Validate the request body and return 422 when customer_id is missing.",
+    },
+    "unknown_coupon": {
+        "label": "Unknown coupon",
+        "description": "GET /checkout with coupon SPRING50 raises KeyError because the code is not in the catalog.",
+        "alarm_name": "OpsPilotSampleService-CheckoutErrors",
+        "alarm_reason": "KeyError SPRING50 on checkout",
+        "classification": "code_defect",
+        "confidence": 0.91,
+        "severity": "sev2",
+        "summary": "KeyError 'SPRING50' in checkout(): an unknown coupon is indexed without a check.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 177, "function": "checkout"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "KeyError: 'SPRING50'"},
+            {"kind": "stack_frame", "ref": "sample_service/faults.py:177", "claim": "COUPONS[coupon]"},
+        ],
+        "patch_diff": CHECKOUT_PATCH,
+        "suggested_fix_strategy": "Return 400 when the coupon code is not in the catalog.",
+    },
+    "legacy_payment": {
+        "label": "Legacy payment delay",
+        "description": "GET /payments/77/status?provider=legacy blocks on the legacy gateway.",
+        "alarm_name": "OpsPilotSampleService-LatencyP95",
+        "alarm_reason": "legacy provider latency",
+        "classification": "code_defect",
+        "confidence": 0.88,
+        "severity": "sev3",
+        "summary": "payment_status sleeps on the legacy provider and holds the request.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 202, "function": "payment_status"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "legacy provider blocked the status read"},
+            {"kind": "stack_frame", "ref": "sample_service/faults.py:202", "claim": "time.sleep(LEGACY_GATEWAY_LATENCY_S)"},
+        ],
+        "patch_diff": PAYMENTS_PATCH,
+        "suggested_fix_strategy": "Do not call the legacy gateway inline.",
+    },
+    "inventory_timeout": {
+        "label": "Inventory database timeout",
+        "description": "GET /inventory/BULK-42 waits on inventory-db and raises TimeoutError.",
+        "alarm_name": "OpsPilotSampleService-InventoryDbTimeouts",
+        "alarm_reason": "inventory-db connection timeouts",
+        "classification": "dependency",
+        "confidence": 0.9,
+        "severity": "sev2",
+        "summary": "Inventory lookup for BULK-42 hits a database timeout talking to inventory-db.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 112, "function": "inventory"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "InventoryDbTimeout: connect to inventory-db.internal timed out"},
+        ],
+        "suggested_fix_strategy": "A person has to look at the inventory database. There is no code patch.",
+    },
+    "report_export": {
+        "label": "Report export out of memory",
+        "description": "GET /reports/export?days=90 buffers the whole export and runs out of memory.",
+        "alarm_name": "OpsPilotSampleService-Crashes",
+        "alarm_reason": "Runtime.OutOfMemory during export",
+        "classification": "resource",
+        "confidence": 0.86,
+        "severity": "sev2",
+        "summary": "The report export runs out of memory while buffering 90 days of rows.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 206, "function": "export_report"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "Runtime.OutOfMemory while exporting the report"},
+        ],
+        "suggested_fix_strategy": "A person has to change how the export uses memory. There is no code patch.",
     },
     "divide_by_zero": {
         "label": "Low-confidence code defect",

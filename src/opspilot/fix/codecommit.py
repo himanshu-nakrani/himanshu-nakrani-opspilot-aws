@@ -44,6 +44,68 @@ def pr_console_url(repo: str, pr_id: Any, region: str) -> str:
     )
 
 
+_CONSOLE_PR_RE = re.compile(
+    r"https://(?P<host_region>[a-z0-9-]+)\.console\.aws\.amazon\.com/codesuite/codecommit/"
+    r"repositories/(?P<repo>[A-Za-z0-9_.-]+)/pull-requests/(?P<pr>\d+)"
+)
+_REGION_QS_RE = re.compile(r"[?&]region=([a-z0-9-]+)")
+
+
+def parse_pr_console_url(url: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Return ``(repo, pull_request_id, region)`` for a CodeCommit console link.
+
+    Other URLs return ``(None, None, None)``. This does not guess an id from a
+    non-CodeCommit link.
+    """
+    match = _CONSOLE_PR_RE.search(url or "")
+    if not match:
+        return None, None, None
+    region_q = _REGION_QS_RE.search(url)
+    region = region_q.group(1) if region_q else match.group("host_region")
+    return match.group("repo"), match.group("pr"), region
+
+
+def describe_pull_request(pr: Dict[str, Any]) -> Dict[str, Any]:
+    """Map a CodeCommit ``GetPullRequest`` payload without inventing a state.
+
+    ``OPEN`` becomes ``open``. ``CLOSED`` with ``mergeMetadata.isMerged`` becomes
+    ``merged``. Any other ``CLOSED`` pull request becomes ``closed``. A status
+    CodeCommit returns that is neither of those is passed through unchanged.
+    ``is_merged`` is set only when CodeCommit included ``isMerged``.
+    """
+    raw = pr.get("pullRequestStatus")
+    flags: List[bool] = []
+    for target in pr.get("pullRequestTargets") or []:
+        meta = target.get("mergeMetadata") or {}
+        if "isMerged" in meta:
+            flags.append(bool(meta["isMerged"]))
+    is_merged: Optional[bool] = True if any(flags) else (False if flags else None)
+    if raw == "OPEN":
+        status = "open"
+    elif raw == "CLOSED" and is_merged is True:
+        status = "merged"
+    elif raw == "CLOSED":
+        status = "closed"
+    elif isinstance(raw, str) and raw:
+        status = raw
+    else:
+        raise CodeCommitError("CodeCommit pull request response has no pullRequestStatus")
+    merge_commit = None
+    for target in pr.get("pullRequestTargets") or []:
+        commit = (target.get("mergeMetadata") or {}).get("mergeCommitId")
+        if commit:
+            merge_commit = commit
+            break
+    pr_raw = pr.get("pullRequestId")
+    return {
+        "pr_number": int(pr_raw) if str(pr_raw).isdigit() else pr_raw,
+        "status": status,
+        "pull_request_status": raw,
+        "is_merged": is_merged,
+        "merge_commit": merge_commit,
+    }
+
+
 class CodeCommitClient:
     """Minimal CodeCommit client with the same surface the fix agent uses.
 
@@ -180,6 +242,10 @@ class CodeCommitClient:
         except Exception as e:
             raise CodeCommitError(f"CodeCommit get pull request {pr_id} failed: {_code(e) or e}") from e
 
+    def get_pull_request_status(self, pr_id: Any) -> Dict[str, Any]:
+        """Read one pull request. Raises ``CodeCommitError`` when CodeCommit cannot be read."""
+        return describe_pull_request(self._get_pr(pr_id))
+
     def open_pull_request(self, branch: str, base: str, title: str, body: str) -> Tuple[int, str]:
         """Open a PR, or return the already-open PR for ``branch`` (idempotent on retry)."""
         existing = self._find_open_pr(branch, base)
@@ -196,6 +262,22 @@ class CodeCommitClient:
             raise CodeCommitError(f"CodeCommit create pull request failed: {_code(e) or e}") from e
         pr_id = pr["pullRequestId"]
         return int(pr_id), pr_console_url(self.repo, pr_id, self.region)
+
+    def post_pull_request_comment(self, pr_id: Any, content: str) -> None:
+        """Leave a comment on the pull request. Does not retitle it or merge it."""
+        pr = self._get_pr(pr_id)
+        target = (pr.get("pullRequestTargets") or [{}])[0]
+        before, after = target.get("destinationCommit"), target.get("sourceCommit")
+        if not before or not after:
+            raise CodeCommitError("CodeCommit pull request has no commits to comment on")
+        self._call(
+            "comment on pull request",
+            "post_comment_for_pull_request",
+            pullRequestId=str(pr_id),
+            beforeCommitId=before,
+            afterCommitId=after,
+            content=(content or "")[:10000],
+        )
 
     def mark_needs_human(self, pr_number: int, reason: str = "") -> None:
         """CodeCommit has no labels: prefix the PR title and leave a comment on the PR."""

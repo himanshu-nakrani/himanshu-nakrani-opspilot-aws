@@ -132,6 +132,9 @@ class FakeGitHub:
         self.labels = []
 
     def get_file(self, path, ref):
+        if path not in self.files:
+            with open(os.path.join(REPO_ROOT, path), encoding="utf-8") as handle:
+                self.files[path] = handle.read()
         return self.files[path]
 
     def commit_files_to_branch(self, branch, base, files, message):
@@ -165,17 +168,72 @@ def test_propose_fix_pr_failure_raises_instead_of_fake_url(sample_inputs):
         propose_fix(rca, ticket, github=FakeGitHub(fail_pr=True))
 
 
+def test_checkout_patch_applies_on_main_and_drops_the_suite_pin(sample_inputs):
+    rca, ticket = sample_inputs
+    rca = rca.model_copy(
+        update={
+            "summary": "KeyError SPRING50 in checkout()",
+            "suspected_location": SuspectedLocation(file="sample_service/faults.py", line=177, function="checkout"),
+            "suggested_fix_strategy": "Return 400 for an unknown coupon.",
+        }
+    )
+    diff = suggested_diff(rca)
+    assert diff and "invalid coupon" in diff and "COUPONS.get" in diff
+    original = open(os.path.join(REPO_ROOT, "sample_service/faults.py"), encoding="utf-8").read()
+    patched = apply_unified_diff(original, diff, "sample_service/faults.py")
+    assert "COUPONS.get(coupon)" in patched
+    assert "COUPONS[coupon]" not in patched
+
+    gh = FakeGitHub()
+    gh.files["sample_service/tests/test_faults.py"] = (
+        "def test_planted():\n"
+        '    ("/checkout?sku=SKU-1&coupon=SPRING50", "checkout", "KeyError"),\n'
+        '    ("/inventory/BULK-42", "inventory", "InventoryDbTimeout"),\n'
+    )
+    pr = propose_fix(rca, ticket, github=gh)
+    _branch, _base, files = gh.commits[0]
+    assert "invalid coupon" in files["sample_service/faults.py"]
+    assert "test_unknown_coupon_returns_400" in files[pr.repro_test_path]
+    suite = files["sample_service/tests/test_faults.py"]
+    assert "SPRING50" not in suite and "BULK-42" in suite
+
+
+def test_payments_patch_skips_the_legacy_delay(sample_inputs):
+    rca, ticket = sample_inputs
+    rca = rca.model_copy(
+        update={
+            "summary": "legacy provider blocks payment_status",
+            "suspected_location": SuspectedLocation(file="sample_service/faults.py", line=202, function="payment_status"),
+        }
+    )
+    diff = suggested_diff(rca)
+    assert diff and "LEGACY_GATEWAY_LATENCY_S" in diff
+    original = open(os.path.join(REPO_ROOT, "sample_service/faults.py"), encoding="utf-8").read()
+    patched = apply_unified_diff(original, diff, "sample_service/faults.py")
+    assert "time.sleep(LEGACY_GATEWAY_LATENCY_S)" not in patched
+    assert "pass" in patched
+    gh = FakeGitHub()
+    pr = propose_fix(rca, ticket, github=gh)
+    files = gh.commits[0][2]
+    assert "test_legacy_provider_returns_without_delay" in files[pr.repro_test_path]
+    assert "sample_service/tests/test_faults.py" not in files
+
+
 def test_propose_fix_refuses_unsupported_target(sample_inputs):
     rca, ticket = sample_inputs
     other = rca.model_copy(update={"suspected_location": SuspectedLocation(file="billing/service.py", line=3, function="x")})
     with pytest.raises(UnsupportedFixTarget):
         propose_fix(other, ticket, github=FakeGitHub())
-    checkout = rca.model_copy(
-        update={"suspected_location": SuspectedLocation(file="sample_service/faults.py", line=177, function="checkout")}
+    inventory = rca.model_copy(
+        update={"suspected_location": SuspectedLocation(file="sample_service/faults.py", line=112, function="inventory")}
     )
     with pytest.raises(UnsupportedFixTarget):
-        propose_fix(checkout, ticket, github=FakeGitHub())
-    assert suggested_diff(checkout) is None
+        propose_fix(inventory, ticket, github=FakeGitHub())
+    assert suggested_diff(inventory) is None
+    report = rca.model_copy(
+        update={"suspected_location": SuspectedLocation(file="sample_service/faults.py", line=206, function="export_report")}
+    )
+    assert suggested_diff(report) is None
 
 
 def test_patch_that_does_not_match_base_is_rejected():

@@ -53,12 +53,52 @@ export interface Incident {
   ticket_url?: string | null;
   pr_branch?: string | null;
   pr_url?: string | null;
+  pr_number?: number | null;
   patch_diff?: string | null;
   /** true when Raise PR can open a pull request for this diff */
   can_raise_pr?: boolean;
+  /** Set when OpsPilot cannot open a pull request and a person has to finish the incident. */
+  human_ending?: string | null;
+  /** Verify build for a real pull request: running, passed, or failed. */
+  test_status?: 'running' | 'passed' | 'failed' | null;
+  test_name?: string | null;
+  test_summary?: string | null;
+  test_log?: string | null;
+  test_error?: string | null;
+  /** Storefront pipeline: not_started, in_progress, succeeded, or failed. */
+  deploy_status?: 'not_started' | 'in_progress' | 'succeeded' | 'failed' | (string & {}) | null;
+  deploy_summary?: string | null;
+  deploy_url?: string | null;
+  deploy_error?: string | null;
+  deploy_stage?: string | null;
   source?: IncidentSource;
   /** set when the dashboard ran the RCA agent itself and kept its trace */
   agent_run_id?: string | null;
+}
+
+/** GET /api/incidents/{id}/pr-status. status is a CodeCommit reading, or "opened" when that read failed. */
+export interface PrStatus {
+  pr_url: string | null;
+  pr_number?: number | null;
+  status: string;
+  pull_request_status?: string | null;
+  is_merged?: boolean | null;
+  error?: string | null;
+  test?: {
+    status?: 'running' | 'passed' | 'failed' | string | null;
+    name?: string | null;
+    summary?: string | null;
+    log_excerpt?: string | null;
+    error?: string | null;
+  } | null;
+  deploy?: {
+    status?: string | null;
+    stage?: string | null;
+    execution_id?: string | null;
+    url?: string | null;
+    summary?: string | null;
+    error?: string | null;
+  } | null;
 }
 
 export type SpanKind = 'cycle' | 'model' | 'tool' | 'step';

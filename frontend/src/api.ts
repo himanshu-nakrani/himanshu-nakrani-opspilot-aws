@@ -1,4 +1,4 @@
-import { AgentRun, AgentRunSummary, EvalsReport, Incident, Scenario, Stats, TicketList, TicketView, TriggerResponse } from './types';
+import { AgentRun, AgentRunSummary, EvalsReport, Incident, PrStatus, Scenario, Stats, TicketList, TicketView, TriggerResponse } from './types';
 
 const API_BASE = '/api';
 
@@ -50,6 +50,9 @@ export const chooseFix = (incidentId: string, action: 'apply_myself' | 'raise_pr
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action }),
   });
+
+export const fetchPrStatus = (incidentId: string, signal?: AbortSignal) =>
+  request<PrStatus>(`/incidents/${encodeURIComponent(incidentId)}/pr-status`, { signal });
 
 export const triggerSimulation = (scenario?: string) =>
   request<TriggerResponse>('/trigger', {

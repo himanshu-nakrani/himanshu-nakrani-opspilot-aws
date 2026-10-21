@@ -23,7 +23,10 @@ def repo_name() -> str:
 
 def get_scm_client() -> Any:
     """Return a client exposing get_file / get_branch_sha / commit_files_to_branch /
-    open_pull_request / mark_needs_human for the configured provider."""
+    open_pull_request / mark_needs_human for the configured provider.
+
+    The CodeCommit client also exposes get_pull_request_status.
+    """
     if provider() == "github":
         from opspilot.fix.git_ops import GitHubClient, get_github_token
 

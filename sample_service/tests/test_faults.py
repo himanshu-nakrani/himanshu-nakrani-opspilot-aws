@@ -40,10 +40,9 @@ def test_checkout_valid_coupon_math():
 
 
 # CodeBuild runs this suite on every fix branch, so it must not pin a bug that the fix agent is
-# expected to repair. The orders repro target (/orders/999) is therefore not asserted here; its
-# traceback parsing is covered in tests/test_sample_service_traceback.py (OpsPilot suite).
+# expected to repair. Orders (/orders/999) and checkout (unknown coupon) are those bugs.
+# Traceback parsing for orders stays in tests/test_sample_service_traceback.py (OpsPilot suite).
 @pytest.mark.parametrize("path,component,error_type", [
-    ("/checkout?sku=SKU-1&coupon=SPRING50", "checkout", "KeyError"),
     ("/inventory/BULK-42", "inventory", "InventoryDbTimeout"),
 ])
 def test_planted_errors_return_500_and_log_structured_event(path, component, error_type, capsys, caplog):

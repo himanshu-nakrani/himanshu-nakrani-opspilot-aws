@@ -14,6 +14,16 @@ from aws_cdk import (
 from constructs import Construct
 
 
+def should_import_codecommit_repo() -> bool:
+    """True only when the operator set CODECOMMIT_REPO_EXISTS to the string 1.
+
+    scripts/deploy.sh defaults an unset value to 0 and does not turn this on
+    because the repository already exists. Importing drops the owned resource
+    from CoreStack and detaches the repo.
+    """
+    return os.environ.get("CODECOMMIT_REPO_EXISTS") == "1"
+
+
 class CoreStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -57,11 +67,10 @@ class CoreStack(Stack):
         self.export_value(self.github_secret.secret_arn)
 
         # AWS CodeCommit repository OpsPilot reads source from, branches, and opens fix PRs in.
-        # IAM-only (no external tokens). RETAIN so `destroy` never deletes fix history; when the
-        # repo already exists (re-deploy after destroy, or pre-provisioned by the event team)
-        # scripts/deploy.sh sets CODECOMMIT_REPO_EXISTS=1 and we import it instead.
+        # IAM-only (no external tokens). RETAIN so `destroy` never deletes fix history.
+        # Own the repository here unless the operator explicitly asked to import it.
         repo_name = os.environ.get("CODECOMMIT_REPO", "opspilot-aws")
-        if os.environ.get("CODECOMMIT_REPO_EXISTS") == "1":
+        if should_import_codecommit_repo():
             self.source_repo = codecommit.Repository.from_repository_name(self, "OpspilotSourceRepo", repo_name)
         else:
             repo = codecommit.Repository(

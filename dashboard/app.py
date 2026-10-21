@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -27,9 +28,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
+from dashboard.endings import human_ending_text
 from opspilot.contracts import ContextBundle, RcaResult, TicketRef
+from opspilot.deploy.pipeline import deploy_not_started, public_deploy, refresh_deploy
 from opspilot.fix.agent import propose_fix, suggested_diff
+from opspilot.fix.codecommit import parse_pr_console_url
 from opspilot.fix.guardrails import PatchRejectedException
+from opspilot.fix.scm import get_scm_client
+from opspilot.verify.pr_check import BUILD_NOT_STARTED, begin_pr_verification, public_test, refresh_verification
 from opspilot.ingest import handle_alarm_event
 from opspilot.rca.agent import run_rca_agent
 from opspilot.agentcore.runtime import AgentCoreRuntime
@@ -53,7 +59,44 @@ FRONTEND_DIST_PATH = REPO_ROOT / "frontend" / "dist"
 
 # Fix pull requests land in the storefront repo CodePipeline deploys, not the platform repo.
 STOREFRONT_REPO = "opspilot-sample-service"
-CLOSED_FIX_CHOICES = {"APPLY_MYSELF", "PR_OPENED", "VERIFIED"}
+_LEGACY_PR_ID_RE = re.compile(r"/pr/(\d+)(?:/|$)")
+_HTTP_PR_URL = re.compile(r"^https?://\S+$", re.IGNORECASE)
+_INCIDENT_FIELDS = {
+    "status",
+    "pr_branch",
+    "pr_url",
+    "pr_number",
+    "patch_diff",
+    "test_status",
+    "test_name",
+    "test_summary",
+    "test_log",
+    "test_build_id",
+    "test_error",
+    "test_comment_posted",
+    "deploy_status",
+    "deploy_summary",
+    "deploy_url",
+    "deploy_error",
+    "deploy_execution_id",
+    "deploy_stage",
+}
+_OPTIONAL_TEXT = (
+    "test_status",
+    "test_name",
+    "test_summary",
+    "test_log",
+    "test_build_id",
+    "test_error",
+    "test_comment_posted",
+    "deploy_status",
+    "deploy_summary",
+    "deploy_url",
+    "deploy_error",
+    "deploy_execution_id",
+    "deploy_stage",
+    "human_ending",
+)
 
 # Local in-memory incident cache for demo & offline mode
 LOCAL_INCIDENTS_CACHE: List[Dict[str, Any]] = []
@@ -102,18 +145,29 @@ def _rca_for_offer(inc: Dict[str, Any]) -> Optional[RcaResult]:
         return None
 
 
+def _http_pr_url(value: Any) -> Optional[str]:
+    """A pull request link is an http(s) URL. A branch name is not a pull request."""
+    if not isinstance(value, str):
+        return None
+    url = value.strip()
+    if not _HTTP_PR_URL.match(url):
+        return None
+    return url
+
+
 def apply_fix_offer(item: Dict[str, Any]) -> None:
     """Show the generator's diff when one exists. Raise PR only in that case.
 
     An authored diff with no generator stays visible so the operator can apply it
-    themselves. The Raise PR button is not offered for that row.
+    themselves. Raise PR stays available after "I'll apply this myself" until a
+    pull request link exists.
     """
     rca = _rca_for_offer(item)
     generated = suggested_diff(rca) if rca is not None else None
     if generated and (item.get("patch_diff") or item.get("status") == "AWAITING_CHOICE"):
         item["patch_diff"] = generated
-    choice_closed = bool(item.get("pr_url")) or item.get("status") in CLOSED_FIX_CHOICES
-    item["can_raise_pr"] = bool(generated) and bool(item.get("patch_diff")) and not choice_closed
+    pr_recorded = _http_pr_url(item.get("pr_url")) is not None or item.get("status") == "VERIFIED"
+    item["can_raise_pr"] = bool(generated) and bool(item.get("patch_diff")) and not pr_recorded
 
 
 @contextmanager
@@ -266,7 +320,13 @@ def list_incidents() -> List[Dict[str, Any]]:
                     "ticket_url": raw.get("ticket_url", {}).get("S"),
                     "pr_branch": raw.get("pr_branch", {}).get("S"),
                     "pr_url": raw.get("pr_url", {}).get("S"),
+                    "pr_number": _optional_pr_number(raw.get("pr_number", {}).get("S")),
                     "patch_diff": raw.get("patch_diff", {}).get("S"),
+                    **{
+                        key: (raw.get(key) or {}).get("S") or None
+                        for key in _OPTIONAL_TEXT
+                        if key != "human_ending"
+                    },
                 }
                 if "rca_result" in raw:
                     try:
@@ -289,7 +349,12 @@ def list_incidents() -> List[Dict[str, Any]]:
         chosen = FIX_CHOICES.get(item.get("incident_id") or "")
         if chosen:
             item.update(chosen)
+        normalize_pull_request_fields(item)
         apply_fix_offer(item)
+        for key in _OPTIONAL_TEXT:
+            if item.get(key) == "":
+                item[key] = None
+        item["human_ending"] = human_ending_text(item)
     return sorted(items, key=lambda x: str(x.get("detected_at", "")), reverse=True)
 
 
@@ -383,9 +448,9 @@ def _record_choice(incident_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         if cached.get("incident_id") == incident_id:
             cached.update(fields)
     stored = {
-        key: str(value)
+        key: "" if value is None else str(value)
         for key, value in fields.items()
-        if key in {"status", "pr_branch", "pr_url", "patch_diff"} and value
+        if key in _INCIDENT_FIELDS
     }
     if stored:
         try:
@@ -397,15 +462,215 @@ def _record_choice(incident_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
     return get_incident(incident_id)
 
 
+def _optional_pr_number(value: Any) -> Optional[int]:
+    text = str(value).strip() if value is not None else ""
+    return int(text) if text.isdigit() else None
+
+
+def normalize_pull_request_fields(item: Dict[str, Any]) -> None:
+    """Drop branch names and other non-links so a fixture cannot look like a pull request.
+
+    ``pr_branch`` is kept only together with an http(s) ``pr_url``.
+    """
+    url = _http_pr_url(item.get("pr_url"))
+    if not url:
+        item["pr_url"] = None
+        item["pr_number"] = None
+        item["pr_branch"] = None
+        for key in _OPTIONAL_TEXT:
+            if key != "human_ending":
+                item[key] = None
+        return
+    item["pr_url"] = url
+    number = _optional_pr_number(item.get("pr_number"))
+    if number is None:
+        _repo, parsed, _region = parse_pr_console_url(url)
+        if not parsed:
+            match = _LEGACY_PR_ID_RE.search(url)
+            parsed = match.group(1) if match else None
+        number = _optional_pr_number(parsed)
+    item["pr_number"] = number
+
+
+def _pull_request_id(inc: Dict[str, Any]) -> Optional[str]:
+    """Id to pass to CodeCommit. Console links win; otherwise the stored number or a /pr/<id> URL."""
+    _repo, pr_from_url, _region = parse_pr_console_url(inc.get("pr_url") or "")
+    if pr_from_url:
+        return pr_from_url
+    number = _optional_pr_number(inc.get("pr_number"))
+    if number is not None:
+        return str(number)
+    match = _LEGACY_PR_ID_RE.search(inc.get("pr_url") or "")
+    return match.group(1) if match else None
+
+
+def read_pull_request_status(inc: Dict[str, Any]) -> Dict[str, Any]:
+    """Live CodeCommit state for an incident that already has a pull request.
+
+    When the read fails, ``status`` stays ``opened`` (the state recorded when the
+    PR was created) and ``error`` explains why. No status is invented.
+    """
+    pr_url = inc.get("pr_url") or ""
+    pr_id = _pull_request_id(inc)
+    last_known = {
+        "pr_url": pr_url,
+        "pr_number": _optional_pr_number(pr_id),
+        "status": "opened",
+        "pull_request_status": None,
+        "is_merged": None,
+        "merge_commit": None,
+        "error": None,
+    }
+    if not pr_id:
+        last_known["error"] = "This pull request link has no id to check."
+        return last_known
+    repo, _pr_from_url, region = parse_pr_console_url(pr_url)
+    try:
+        if repo:
+            from opspilot.fix.codecommit import CodeCommitClient
+
+            client = CodeCommitClient(repo, region=region)
+        else:
+            with _storefront_repo_env():
+                client = get_scm_client()
+        reader = getattr(client, "get_pull_request_status", None)
+        if reader is None:
+            last_known["error"] = "CodeCommit could not be reached."
+            return last_known
+        live = reader(pr_id)
+    except Exception as e:  # noqa: BLE001 - the screen still shows the link and the last known state
+        logger.warning("PR status read failed for %s: %s", inc.get("incident_id"), e)
+        last_known["error"] = "CodeCommit could not be reached."
+        return last_known
+    status = live.get("status") if isinstance(live, dict) else None
+    if not status:
+        last_known["error"] = "CodeCommit could not be reached."
+        return last_known
+    return {
+        "pr_url": pr_url,
+        "pr_number": _optional_pr_number(live.get("pr_number")) or last_known["pr_number"],
+        "status": status,
+        "pull_request_status": live.get("pull_request_status"),
+        "is_merged": live.get("is_merged"),
+        "merge_commit": live.get("merge_commit"),
+        "error": None,
+    }
+
+
+def _aws_region() -> str:
+    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+
+
+def get_codebuild_client():
+    """CodeBuild client for the verify project. Tests replace this."""
+    return boto3.client("codebuild", region_name=_aws_region())
+
+
+def get_pipeline_client():
+    """CodePipeline client for the storefront pipeline. Tests replace this."""
+    return boto3.client("codepipeline", region_name=_aws_region())
+
+
+def _scm_for_incident(inc: Dict[str, Any]):
+    pr_url = inc.get("pr_url") or ""
+    repo, _pr_from_url, region = parse_pr_console_url(pr_url)
+    if repo:
+        from opspilot.fix.codecommit import CodeCommitClient
+
+        return CodeCommitClient(repo, region=region)
+    with _storefront_repo_env():
+        return get_scm_client()
+
+
+def _commenter_for(inc: Dict[str, Any]):
+    def comment(content: str) -> None:
+        pr_id = _pull_request_id(inc)
+        if not pr_id:
+            raise RuntimeError("missing pull request id")
+        client = _scm_for_incident(inc)
+        poster = getattr(client, "post_pull_request_comment", None)
+        if poster is None:
+            raise RuntimeError("pull request client cannot comment")
+        poster(pr_id, content)
+
+    return comment
+
+
+def _verification_client(inc: Dict[str, Any]):
+    """CodeBuild client only while a build still needs to be read."""
+    if not inc.get("test_build_id"):
+        return None
+    if inc.get("test_status") in {"passed", "failed"} and inc.get("test_comment_posted") == "yes":
+        return None
+    return get_codebuild_client()
+
+
+def _pipeline_client_for(pr_status: Dict[str, Any]):
+    merged = pr_status.get("is_merged") is True or pr_status.get("status") == "merged"
+    if pr_status.get("error") or not merged or not pr_status.get("merge_commit"):
+        return None
+    return get_pipeline_client()
+
+
+@dashboard_app.get("/api/incidents/{incident_id}/pr-status")
+def incident_pr_status(incident_id: str) -> Dict[str, Any]:
+    """Current CodeCommit state, the verify build, and the storefront deploy."""
+    inc = get_incident(incident_id)
+    if not inc.get("pr_url"):
+        raise HTTPException(status_code=404, detail="This incident has no pull request.")
+    body = read_pull_request_status(inc)
+    updates: Dict[str, Any] = {}
+    try:
+        test_fields = refresh_verification(
+            inc,
+            codebuild_client=_verification_client(inc),
+            commenter=_commenter_for(inc),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Verification refresh failed for %s: %s", incident_id, e)
+        test_fields = {"test_error": "The verification build could not be read.", "test_status": inc.get("test_status")}
+    if test_fields:
+        updates.update(test_fields)
+    try:
+        deploy_fields = refresh_deploy(
+            {**inc, **updates},
+            body,
+            pipeline_client=_pipeline_client_for(body),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Deploy refresh failed for %s: %s", incident_id, e)
+        deploy_fields = {
+            "deploy_status": inc.get("deploy_status"),
+            "deploy_summary": inc.get("deploy_summary") or "",
+            "deploy_url": inc.get("deploy_url"),
+            "deploy_error": "The pipeline could not be read.",
+            "deploy_execution_id": inc.get("deploy_execution_id") or "",
+            "deploy_stage": inc.get("deploy_stage") or "",
+        }
+    updates.update(deploy_fields)
+    if updates:
+        _record_choice(incident_id, updates)
+    merged = {**inc, **updates}
+    body["test"] = public_test(merged)
+    body["deploy"] = public_deploy(merged)
+    return body
+
+
 @dashboard_app.post("/api/incidents/{incident_id}/fix-choice")
 def choose_fix(incident_id: str, body: FixChoiceBody) -> Dict[str, Any]:
-    """Record "I'll apply this myself" or open the CodeCommit pull request for the suggested diff."""
+    """Record "I'll apply this myself" or open the CodeCommit pull request for the suggested diff.
+
+    Raise PR stays available after apply-myself. Once a pull request exists, another
+    one is refused.
+    """
     inc = get_incident(incident_id)
-    if inc.get("pr_url") or inc.get("status") in {"APPLY_MYSELF", "PR_OPENED", "VERIFIED"}:
-        raise HTTPException(status_code=409, detail="A choice was already recorded for this incident.")
+    if _http_pr_url(inc.get("pr_url")) or inc.get("status") == "VERIFIED":
+        raise HTTPException(status_code=409, detail="A pull request was already opened for this incident.")
     if not inc.get("patch_diff"):
         raise HTTPException(status_code=400, detail="This incident has no suggested change.")
     if body.action == "apply_myself":
+        if inc.get("status") == "APPLY_MYSELF":
+            raise HTTPException(status_code=409, detail="You already chose to apply this change yourself.")
         return _record_choice(incident_id, {"status": "APPLY_MYSELF"})
     if not inc.get("can_raise_pr"):
         raise HTTPException(
@@ -433,6 +698,21 @@ def choose_fix(incident_id: str, body: FixChoiceBody) -> Dict[str, Any]:
         )
         with _storefront_repo_env():
             pr = propose_fix(rca, ticket)
+            try:
+                codebuild = get_codebuild_client()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Verification client was not created for %s: %s", incident_id, e)
+                verification = {
+                    "test_status": None,
+                    "test_name": None,
+                    "test_summary": "",
+                    "test_log": "",
+                    "test_build_id": "",
+                    "test_error": BUILD_NOT_STARTED,
+                    "test_comment_posted": "",
+                }
+            else:
+                verification = begin_pr_verification(pr, rca, codebuild_client=codebuild)
     except PatchRejectedException as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001
@@ -444,7 +724,10 @@ def choose_fix(incident_id: str, body: FixChoiceBody) -> Dict[str, Any]:
             "status": "PR_OPENED",
             "pr_branch": pr.branch,
             "pr_url": pr.pr_url,
+            "pr_number": pr.pr_number,
             "patch_diff": inc.get("patch_diff"),
+            **verification,
+            **deploy_not_started(),
         },
     )
 
@@ -573,6 +856,7 @@ def trigger_incident_simulation(body: Optional[TriggerRequest] = None) -> Dict[s
         "scenario": scenario_id,
     }
     apply_fix_offer(new_inc)
+    new_inc["human_ending"] = human_ending_text(new_inc)
     LOCAL_INCIDENTS_CACHE.insert(0, new_inc)
     del LOCAL_INCIDENTS_CACHE[LOCAL_INCIDENTS_CACHE_MAX:]
 

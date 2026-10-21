@@ -64,7 +64,7 @@ FAULTS: List[Dict[str, str]] = [
         "trigger": "GET /checkout?sku=SKU-1&qty=2&coupon=SPRING50",
         "symptom": "500: KeyError 'SPRING50' (unknown coupon is not validated)",
         "alarm": "OpsPilotSampleService-CheckoutErrors",
-        "expected_route": "code_defect -> OpsCenter OpsItem -> fix attempt (stub patcher only fixes orders, so needs-human)",
+        "expected_route": "code_defect -> OpsCenter OpsItem -> fix PR (unknown coupon returns 400)",
     },
     {
         "id": "inventory",
@@ -78,7 +78,7 @@ FAULTS: List[Dict[str, str]] = [
         "trigger": "GET /payments/77/status?provider=legacy",
         "symptom": "200 after ~6 s: legacy payment gateway latency spike",
         "alarm": "OpsPilotSampleService-LatencyP95",
-        "expected_route": "dependency -> OpsCenter OpsItem -> notify on-call (no PR)",
+        "expected_route": "code_defect on payment_status -> fix PR (skip the legacy delay); otherwise a person handles it",
     },
     {
         "id": "reports",

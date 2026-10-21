@@ -2,7 +2,13 @@
 
 import pytest
 
-from opspilot.fix.codecommit import CodeCommitClient, CodeCommitError, NEEDS_HUMAN_PREFIX
+from opspilot.fix.codecommit import (
+    CodeCommitClient,
+    CodeCommitError,
+    NEEDS_HUMAN_PREFIX,
+    parse_pr_console_url,
+    pr_console_url,
+)
 from opspilot.fix import scm
 
 
@@ -130,6 +136,16 @@ def test_mark_needs_human_prefixes_title_once_and_comments(cc):
     assert len(fake.comments) == 2 and fake.comments[0]["beforeCommitId"] == "base000"
 
 
+def test_post_pull_request_comment_does_not_retitle(cc):
+    client, fake = cc
+    client.commit_files_to_branch("opspilot/OPS-3", "main", {"a.py": "1\n"}, "fix")
+    number, _url = client.open_pull_request("opspilot/OPS-3", "main", "Keep this title", "b")
+    client.post_pull_request_comment(number, "OpsPilot verification: passed\nTest: sample_service/tests/t.py::test_missing_order_returns_404")
+    assert fake.prs[str(number)]["title"] == "Keep this title"
+    assert fake.comments[-1]["content"].startswith("OpsPilot verification: passed")
+    assert fake.comments[-1]["beforeCommitId"] == "base000"
+
+
 def test_errors_are_typed(cc):
     client, _ = cc
     with pytest.raises(CodeCommitError):
@@ -141,6 +157,41 @@ def test_recent_commits_for_path(cc):
     client.commit_files_to_branch("main2", "main", {"sample_service/app.py": "v2\n"}, "touch app\n\nbody")
     commits = client.recent_commits_for_path("sample_service/app.py", ref="main2")
     assert [c["subject"] for c in commits] == ["touch app", "init"]
+
+
+def test_pull_request_status_maps_open_merged_closed_and_unknown(cc):
+    """Status comes from CodeCommit's pullRequestStatus and isMerged. Unknown values pass through."""
+    client, fake = cc
+    client.commit_files_to_branch("opspilot/OPS-9", "main", {"a.py": "1\n"}, "fix")
+    number, _url = client.open_pull_request("opspilot/OPS-9", "main", "t", "b")
+    opened = client.get_pull_request_status(number)
+    assert opened["status"] == "open"
+    assert opened["pull_request_status"] == "OPEN"
+    assert opened["is_merged"] is None
+
+    pr = fake.prs[str(number)]
+    pr["pullRequestStatus"] = "CLOSED"
+    pr["pullRequestTargets"][0]["mergeMetadata"] = {"isMerged": False}
+    closed = client.get_pull_request_status(number)
+    assert closed["status"] == "closed" and closed["is_merged"] is False
+
+    pr["pullRequestTargets"][0]["mergeMetadata"] = {"isMerged": True}
+    merged = client.get_pull_request_status(number)
+    assert merged["status"] == "merged" and merged["is_merged"] is True and merged["pull_request_status"] == "CLOSED"
+
+    pr["pullRequestStatus"] = "PENDING"
+    raw = client.get_pull_request_status(number)
+    assert raw["status"] == "PENDING" and raw["pull_request_status"] == "PENDING"
+
+    pr.pop("pullRequestStatus")
+    with pytest.raises(CodeCommitError, match="no pullRequestStatus"):
+        client.get_pull_request_status(number)
+
+
+def test_parse_pr_console_url_round_trip():
+    url = pr_console_url("opspilot-sample-service", 42, "us-east-1")
+    assert parse_pr_console_url(url) == ("opspilot-sample-service", "42", "us-east-1")
+    assert parse_pr_console_url("https://codecommit.example/pr/9") == (None, None, None)
 
 
 def test_invalid_repo_name_rejected():
