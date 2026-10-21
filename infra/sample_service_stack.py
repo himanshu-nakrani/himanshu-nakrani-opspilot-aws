@@ -100,6 +100,10 @@ class SampleServiceStack(Stack):
             )
         # Back-compat handle for code that expects a single alarm.
         self.alarm = self.alarms["orders"]
+        # DEPRECATED, kept for ONE release: stacks deployed before per-component alarms have
+        # OpsPilotPipelineStack importing this alarm's name, and CloudFormation refuses to drop an
+        # export that is still imported. Remove once every pipeline has redeployed.
+        self.export_value(self.alarm.alarm_name)
 
         duration_p95 = self.service_fn.metric_duration(statistic="p95", period=Duration.minutes(1))
         self.alarms["latency"] = self._alarm(

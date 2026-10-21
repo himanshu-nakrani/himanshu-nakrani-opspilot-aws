@@ -46,6 +46,16 @@ class CoreStack(Stack):
         )
         self.export_value(self.jira_secret.secret_arn)
 
+        # DEPRECATED, kept for ONE release for the same reason as the Jira secret: stacks deployed
+        # before the CodeCommit switch have OpsPilotPipelineStack importing this secret's ARN.
+        self.github_secret = secretsmanager.Secret(
+            self,
+            "GitHubTokenSecret",
+            secret_name="opspilot/github",
+            description="DEPRECATED (unused since CodeCommit source control); remove next release",
+        )
+        self.export_value(self.github_secret.secret_arn)
+
         # AWS CodeCommit repository OpsPilot reads source from, branches, and opens fix PRs in.
         # IAM-only (no external tokens). RETAIN so `destroy` never deletes fix history; when the
         # repo already exists (re-deploy after destroy, or pre-provisioned by the event team)

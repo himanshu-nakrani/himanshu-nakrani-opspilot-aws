@@ -362,7 +362,7 @@ class PipelineStack(Stack):
             iam.PolicyStatement(
                 actions=["events:PutTargets", "events:PutRule", "events:DescribeRule"],
                 resources=[
-                    f"arn:aws:events:{self.region}:{self.account}:rule/StepFunctionsGetEventsForCodeBuildStartBuildRule"
+                    f"arn:aws:events:{self.region}:{self.account}:rule/StepFunctionsGetEventForCodeBuildStartBuildRule"
                 ],
             )
         )
