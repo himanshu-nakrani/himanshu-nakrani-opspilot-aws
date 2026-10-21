@@ -101,7 +101,7 @@ def _pr_body(rca: RcaResult, ticket_ref: TicketRef, test_path: str) -> str:
 **Classification:** `{rca.classification}`
 **Severity:** `{rca.severity.upper()}`
 **Confidence:** `{int(rca.confidence * 100)}%`
-**Jira Ticket:** [{ticket_ref.key}]({ticket_ref.url})
+**OpsCenter OpsItem:** [{ticket_ref.key}]({ticket_ref.url})
 
 ### Root cause summary
 {rca.summary}

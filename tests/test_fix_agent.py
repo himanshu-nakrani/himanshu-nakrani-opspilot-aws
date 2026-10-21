@@ -25,7 +25,7 @@ def sample_inputs():
         ],
         suggested_fix_strategy="Return 404 HTTPException for missing order.",
     )
-    ticket = TicketRef(key="OPS-42", url="https://jira.test/browse/OPS-42", incident_id="inc-fix-001")
+    ticket = TicketRef(key="oi-0a1b2c3d4e5f", url="https://us-east-1.console.aws.amazon.com/systems-manager/opsitems/oi-0a1b2c3d4e5f?region=us-east-1", incident_id="inc-fix-001")
     return rca, ticket
 
 
@@ -33,7 +33,7 @@ def test_generate_repro_test_and_patch(sample_inputs):
     rca, ticket = sample_inputs
     repro_code, test_path, patch = generate_repro_test_and_patch(rca, ticket)
 
-    assert "test_opspilot_ops_42.py" in test_path
+    assert "test_opspilot_oi_0a1b2c3d4e5f.py" in test_path
     assert "test_missing_order_returns_404" in repro_code
     assert 'assert response.status_code == 404' in repro_code
     assert "HTTPException" in patch
@@ -70,7 +70,7 @@ def test_propose_fix_commits_patched_file_and_opens_pr(sample_inputs):
     rca, ticket = sample_inputs
     gh = FakeGitHub()
     pr_ref = propose_fix(rca, ticket, github=gh)
-    assert pr_ref.branch == "opspilot/OPS-42"
+    assert pr_ref.branch == "opspilot/oi-0a1b2c3d4e5f"
     assert pr_ref.pr_url == "https://github.com/o/r/pull/7" and pr_ref.pr_number == 7
     branch, base, files = gh.commits[0]
     # Only the patched file and the repro test are committed (no `git add .`).
@@ -98,8 +98,8 @@ def test_patch_that_does_not_match_base_is_rejected():
 
 def test_mark_needs_human_labels_pr(sample_inputs):
     gh = FakeGitHub()
-    event = {"pr": {"branch": "opspilot/OPS-42", "base": "main",
-                    "repro_test_path": "sample_service/tests/test_opspilot_ops_42.py", "pr_number": 42, "attempt": 1}}
+    event = {"pr": {"branch": "opspilot/oi-0a1b2c3d4e5f", "base": "main",
+                    "repro_test_path": "sample_service/tests/test_opspilot_oi_0a1b2c3d4e5f.py", "pr_number": 42, "attempt": 1}}
     result = mark_needs_human_handler(event, github=gh)
     assert result["status"] == "needs_human"
     assert gh.labels == [(42, ["needs-human"])]

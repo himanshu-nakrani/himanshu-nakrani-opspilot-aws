@@ -32,13 +32,7 @@ class CoreStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # Secrets Manager references for 3rd-party services
-        self.jira_secret = secretsmanager.Secret(
-            self,
-            "JiraCredentialsSecret",
-            secret_name="opspilot/jira",
-            description="OpsPilot Jira API token and credentials",
-        )
+        # Ticketing is native AWS Systems Manager OpsCenter (IAM only); no ticketing secret is needed.
 
         # AWS CodeCommit repository OpsPilot reads source from, branches, and opens fix PRs in.
         # IAM-only (no external tokens). RETAIN so `destroy` never deletes fix history; when the

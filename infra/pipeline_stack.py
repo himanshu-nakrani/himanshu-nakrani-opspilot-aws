@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 import aws_cdk as cdk
 from aws_cdk import (
+    Aws,
     Stack,
     Duration,
     aws_lambda as lambda_,
@@ -56,9 +57,6 @@ class PipelineStack(Stack):
 
         bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
         source_repo = core_stack.source_repo
-        jira_base_url = os.environ.get("JIRA_BASE_URL", "https://jira.example.com")
-        jira_project_key = os.environ.get("JIRA_PROJECT_KEY", "OPS")
-        jira_email = os.environ.get("JIRA_EMAIL", "opspilot@example.com")
 
         common_env = {
             "INCIDENTS_TABLE_NAME": core_stack.incidents_table.table_name,
@@ -69,13 +67,12 @@ class PipelineStack(Stack):
             "STRANDS_FRAMEWORK": "strands-agents",
             "AGENTCORE_RUNTIME_ENABLED": "true",
             "AGENTCORE_POLICY_ENFORCEMENT": "strict",
-            "JIRA_BASE_URL": jira_base_url,
-            "JIRA_PROJECT_KEY": jira_project_key,
-            "JIRA_EMAIL": jira_email,
-            "JIRA_SECRET_ARN": core_stack.jira_secret.secret_arn,
+            # Ticketing: AWS Systems Manager OpsCenter OpsItems, IAM auth, no external service.
+            "TICKETING_PROVIDER": "opscenter",
+            "OPSCENTER_SOURCE": "OpsPilot",
             "SLACK_SECRET_ARN": core_stack.slack_secret.secret_arn,
             "SNS_TOPIC_ARN": core_stack.alerts_topic.topic_arn,
-            # Explicit live mode: real Bedrock/CodeCommit/Jira, failures raise to Step Functions.
+            # Explicit live mode: real Bedrock/CodeCommit/OpsCenter, failures raise to Step Functions.
             "OPSPILOT_MODE": "live",
         }
 
@@ -132,14 +129,21 @@ class PipelineStack(Stack):
             "CreateTicketFunction",
             function_name="opspilot-create-ticket",
             runtime=lambda_.Runtime.PYTHON_3_12,
-            handler="opspilot.jira_client.handler",
+            handler="opspilot.ticketing.handler",
             code=lambda_code,
             timeout=Duration.seconds(60),
             memory_size=256,
             environment=common_env,
         )
         core_stack.incidents_table.grant_read_write_data(self.create_ticket_fn)
-        core_stack.jira_secret.grant_read(self.create_ticket_fn)
+        # OpsCenter: CreateOpsItem/DescribeOpsItems have no resource-level scoping; Get/Update are scoped to OpsItems.
+        opsitem_arn = f"arn:{Aws.PARTITION}:ssm:{Aws.REGION}:{Aws.ACCOUNT_ID}:opsitem/*"
+        self.create_ticket_fn.add_to_role_policy(
+            iam.PolicyStatement(actions=["ssm:CreateOpsItem", "ssm:DescribeOpsItems"], resources=["*"])
+        )
+        self.create_ticket_fn.add_to_role_policy(
+            iam.PolicyStatement(actions=["ssm:GetOpsItem", "ssm:UpdateOpsItem"], resources=[opsitem_arn])
+        )
 
         # 4. ProposeFix Function
         self.propose_fix_fn = lambda_.Function(
@@ -191,6 +195,10 @@ class PipelineStack(Stack):
         )
         core_stack.incidents_table.grant_read_write_data(self.notify_fn)
         core_stack.slack_secret.grant_read(self.notify_fn)
+        # Notify mirrors the run outcome onto the OpsItem (Open -> InProgress when a fix PR is verified).
+        self.notify_fn.add_to_role_policy(
+            iam.PolicyStatement(actions=["ssm:GetOpsItem", "ssm:UpdateOpsItem"], resources=[opsitem_arn])
+        )
         core_stack.alerts_topic.grant_publish(self.notify_fn)
 
         # 7. CodeBuild Verify Project

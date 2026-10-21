@@ -2,7 +2,7 @@
 
 OpsPilot is an agent pipeline that takes a production alert and carries it through to a reviewable fix:
 
-**CloudWatch alarm → EventBridge → Step Functions → RCA agent (Bedrock) → classification → Jira ticket → fix PR (AWS CodeCommit) → CodeBuild tests → Slack/SNS notification → a human merges**
+**CloudWatch alarm → EventBridge → Step Functions → RCA agent (Bedrock) → classification → AWS OpsCenter OpsItem → fix PR (AWS CodeCommit) → CodeBuild tests → Slack/SNS notification → a human merges**
 
 This is a proof-of-concept. It targets **one** deliberately broken sample service and **deterministic code-level failures** (unhandled exceptions, missing env vars). It never merges or deploys on its own.
 
@@ -12,7 +12,7 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 | M0 Design docs, contracts, state machine | ✅ this commit |
 | M1 Sample service + failure + alarm → EventBridge | ✅ done |
 | M2 Context collector + RCA agent (Bedrock, structured output) | ✅ done |
-| M3 Classifier/router + Jira ticket | ✅ done |
+| M3 Classifier/router + OpsCenter ticket | ✅ done |
 | M4 Patch agent → branch + PR with reproduction test | ✅ done |
 | M5 CodeBuild verification + notification | ✅ done |
 | M6 Offline eval harness (replay fixtures) | ✅ done |
@@ -22,7 +22,7 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 One command deploys the whole stack (core, sample service with planted faults, pipeline), writes secrets and checks the result:
 
 ```bash
-cp .env.deploy.example .env.deploy   # AWS profile/region, CodeCommit repo name, Jira
+cp .env.deploy.example .env.deploy   # AWS profile/region, CodeCommit repo name
 bash scripts/deploy.sh                    # preflight -> bootstrap -> synth -> deploy -> secrets -> verify
 ```
 

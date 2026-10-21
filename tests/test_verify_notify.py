@@ -27,11 +27,11 @@ def sample_pipeline_state():
         ],
         suggested_fix_strategy="Return 404 HTTPException for missing order.",
     )
-    ticket = TicketRef(key="OPS-42", url="https://jira.test/browse/OPS-42", incident_id="inc-verify-001")
+    ticket = TicketRef(key="oi-0a1b2c3d4e5f", url="https://us-east-1.console.aws.amazon.com/systems-manager/opsitems/oi-0a1b2c3d4e5f?region=us-east-1", incident_id="inc-verify-001")
     pr = PrRef(
-        branch="opspilot/OPS-42",
+        branch="opspilot/oi-0a1b2c3d4e5f",
         base="main",
-        repro_test_path="sample_service/tests/test_opspilot_ops_42.py",
+        repro_test_path="sample_service/tests/test_opspilot_oi_0a1b2c3d4e5f.py",
         pr_url="https://github.com/himanshu-nakrani/opspilot-aws-poc/pull/42",
         pr_number=42,
         attempt=1,
@@ -133,7 +133,8 @@ def test_slack_notification_block_kit(sample_pipeline_state):
     assert "inc-verify-001" in blocks_json
     assert "code_defect" in blocks_json
     assert "sample_service/app.py:29" in blocks_json
-    assert "https://jira.test/browse/OPS-42" in blocks_json
+    assert "systems-manager/opsitems/oi-0a1b2c3d4e5f" in blocks_json
+    assert "OpsCenter" in blocks_json
     assert "https://github.com/himanshu-nakrani/opspilot-aws-poc/pull/42" in blocks_json
     assert "VERIFIED" in blocks_json
 

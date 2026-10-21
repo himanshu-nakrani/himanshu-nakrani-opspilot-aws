@@ -122,24 +122,22 @@ def test_parse_verification_handler_build_never_started():
     assert res["verdict"] == "failed" and "did not start" in res["details"]
 
 
-def test_jira_create_failure_raises_instead_of_fake_ticket(monkeypatch):
-    from opspilot import jira_client
+def test_opscenter_create_failure_raises_instead_of_fake_ticket():
+    from opspilot import ticketing
 
     rca = RcaResult(incident_id="inc-j", classification="code_defect", severity="sev2", confidence=0.9,
                     summary="s", evidence=[EvidenceItem(kind="log_line", ref="l1", claim="c")],
                     suggested_fix_strategy="x")
 
-    def handler(request):
-        if "search" in request.url.path:
-            return httpx.Response(200, json={"total": 0, "issues": []})
-        return httpx.Response(500, text="boom")
+    class BrokenSSM:
+        def describe_ops_items(self, **kw):
+            return {"OpsItemSummaries": []}
 
-    for k, v in {"JIRA_BASE_URL": "https://jira.test", "JIRA_PROJECT_KEY": "OPS",
-                 "JIRA_EMAIL": "t@test.org", "JIRA_API_TOKEN": "x"}.items():
-        monkeypatch.setenv(k, v)
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    with pytest.raises(jira_client.JiraError):
-        jira_client.create_issue(rca, http_client=client)
+        def create_ops_item(self, **kw):
+            raise RuntimeError("AccessDeniedException")
+
+    with pytest.raises(ticketing.TicketingError):
+        ticketing.create_ticket(rca, ssm_client=BrokenSSM())
 
 
 def test_asl_route_matches_python_router():
