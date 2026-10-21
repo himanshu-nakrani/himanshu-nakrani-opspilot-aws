@@ -92,14 +92,48 @@ def build_description(rca: RcaResult) -> str:
     return text
 
 
+RCA_DATA_MAX = 20000  # OperationalData value limit
+
+
+def _bounded_rca_json(rca: RcaResult, limit: int = RCA_DATA_MAX) -> str:
+    """Serialize the RCA so it is always valid JSON within ``limit`` characters.
+
+    Free-text fields are shortened before serializing (never the serialized string), and trailing
+    evidence items are dropped if needed. ``_truncated`` is set when anything was cut.
+    """
+    full = rca.model_dump_json()
+    if len(full) <= limit:
+        return full
+    data = json.loads(full)
+    data["_truncated"] = True
+    for budget in (4000, 1500, 500, 200):
+        for key in ("summary", "suggested_fix_strategy"):
+            if isinstance(data.get(key), str) and len(data[key]) > budget:
+                data[key] = data[key][: budget - 1] + "…"
+        for ev in data.get("evidence") or []:
+            for key in ("claim", "ref"):
+                if isinstance(ev.get(key), str) and len(ev[key]) > budget // 4:
+                    ev[key] = ev[key][: budget // 4 - 1] + "…"
+        out = json.dumps(data, ensure_ascii=False)
+        if len(out) <= limit:
+            return out
+    while data.get("evidence") and len(json.dumps(data, ensure_ascii=False)) > limit:
+        data["evidence"].pop()
+    out = json.dumps(data, ensure_ascii=False)
+    if len(out) > limit:  # pathological: keep only the identifying fields
+        out = json.dumps({k: data.get(k) for k in ("incident_id", "classification", "severity",
+                                                      "confidence", "_truncated")})
+    return out
+
+
 def _operational_data(rca: RcaResult, incident: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
     data = {
         INCIDENT_KEY: {"Value": rca.incident_id, "Type": "SearchableString"},
         "opspilot:classification": {"Value": rca.classification, "Type": "SearchableString"},
         "opspilot:severity": {"Value": rca.severity, "Type": "SearchableString"},
         "opspilot:confidence": {"Value": f"{rca.confidence:.2f}", "Type": "String"},
-        # Full RCA JSON (well under the 20 KB value limit) so nothing is lost to the description cap.
-        "opspilot:rca": {"Value": rca.model_dump_json()[:20000], "Type": "String"},
+        # RCA JSON, shortened field-by-field to stay valid JSON under the 20 KB value limit.
+        "opspilot:rca": {"Value": _bounded_rca_json(rca), "Type": "String"},
     }
     for field in ("service", "alarm_name", "log_group", "detected_at"):
         value = (incident or {}).get(field)
@@ -199,24 +233,34 @@ def create_ticket(
 
 def update_ticket(
     ticket: TicketRef,
-    status: str,
+    status: Optional[str],
     note: str,
     extra: Optional[Dict[str, str]] = None,
     ssm_client=None,
 ) -> None:
-    """Move the OpsItem to ``status`` and record ``note`` (and ``extra``) as operational data."""
-    if status not in VALID_STATUSES:
+    """Record ``note`` (and ``extra``) as operational data; move the OpsItem to ``status`` unless None."""
+    if status is not None and status not in VALID_STATUSES:
         raise ValueError(f"status must be one of {VALID_STATUSES}")
     data = {"opspilot:last_update": {"Value": note[:20000], "Type": "String"}}
     for k, v in (extra or {}).items():
         if v:
             data[f"opspilot:{k}"] = {"Value": str(v)[:20000], "Type": "SearchableString"}
     try:
-        (ssm_client or boto3.client("ssm")).update_ops_item(
-            OpsItemId=ticket.key, Status=status, OperationalData=data
-        )
+        kwargs: Dict[str, Any] = {"OpsItemId": ticket.key, "OperationalData": data}
+        if status is not None:
+            kwargs["Status"] = status
+        (ssm_client or boto3.client("ssm")).update_ops_item(**kwargs)
     except Exception as e:  # noqa: BLE001
         raise TicketingError(f"OpsCenter UpdateOpsItem failed for {ticket.key}: {e}") from e
+
+
+def get_status(ticket: TicketRef, ssm_client=None) -> Optional[str]:
+    """Current OpsItem status as set in OpsCenter (by a human or by OpsPilot)."""
+    try:
+        resp = (ssm_client or boto3.client("ssm")).get_ops_item(OpsItemId=ticket.key)
+    except Exception as e:  # noqa: BLE001
+        raise TicketingError(f"OpsCenter GetOpsItem failed for {ticket.key}: {e}") from e
+    return (resp.get("OpsItem") or {}).get("Status")
 
 
 def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, Any]:

@@ -14,8 +14,9 @@ from opspilot.notify import sync_ticket_status
 class FakeSSM:
     """Records OpsCenter calls; behaves like the subset of the SSM API ticketing uses."""
 
-    def __init__(self, existing=None, fail_update=False):
+    def __init__(self, existing=None, fail_update=False, current_status="Open", fail_get=False):
         self.existing = existing or {}
+        self.current_status, self.fail_get = current_status, fail_get
         self.created, self.updated, self.searches = [], [], []
         self.fail_update = fail_update
 
@@ -34,6 +35,11 @@ class FakeSSM:
     def create_ops_item(self, **kw):
         self.created.append(kw)
         return {"OpsItemId": "oi-0123456789ab"}
+
+    def get_ops_item(self, OpsItemId):
+        if self.fail_get:
+            raise RuntimeError("AccessDenied")
+        return {"OpsItem": {"OpsItemId": OpsItemId, "Status": self.current_status}}
 
     def update_ops_item(self, **kw):
         if self.fail_update:
@@ -157,7 +163,7 @@ def test_needs_human_keeps_opsitem_open_and_never_auto_resolves():
     for final in ("NEEDS_HUMAN", "FAILED", "NOTIFIED"):
         status, synced = sync_ticket_status(_ticket(), final, None, None, "boom", ssm_client=ssm)
         assert (status, synced) == ("Open", True)
-    assert all(u["Status"] != "Resolved" for u in ssm.updated)
+    assert all(u.get("Status") != "Resolved" for u in ssm.updated)
 
 
 def test_opsitem_update_failure_does_not_block_notification():
@@ -168,3 +174,38 @@ def test_opsitem_update_failure_does_not_block_notification():
 def test_update_ticket_rejects_unknown_status():
     with pytest.raises(ValueError):
         ticketing.update_ticket(_ticket(), "Closed", "x", ssm_client=FakeSSM())
+
+
+@pytest.mark.parametrize("human_status", ["Resolved", "InProgress"])
+def test_human_set_status_is_never_overwritten(human_status):
+    ssm = FakeSSM(current_status=human_status)
+    status, synced = sync_ticket_status(_ticket(), "NEEDS_HUMAN", None, None, None, ssm_client=ssm)
+    assert (status, synced) == (human_status, True)
+    upd = ssm.updated[0]
+    assert "Status" not in upd  # outcome recorded, status left as the human set it
+    assert upd["OperationalData"]["opspilot:run_status"]["Value"] == "NEEDS_HUMAN"
+    assert upd["OperationalData"]["opspilot:proposed_status"]["Value"] == "Open"
+
+
+def test_unreadable_status_is_left_untouched():
+    ssm = FakeSSM(fail_get=True)
+    status, synced = sync_ticket_status(_ticket(), "VERIFIED", None, None, None, ssm_client=ssm)
+    assert synced is True and status == "Open"
+    assert "Status" not in ssm.updated[0]
+
+
+def test_oversized_rca_stays_valid_json_within_limit(rca):
+    big = rca.model_copy(update={
+        "suggested_fix_strategy": "x" * 50000,
+        "summary": "s" * 30000,
+        "evidence": [EvidenceItem(kind="log_line", ref=f"log-{i}", claim="c" * 3000) for i in range(40)],
+    })
+    od = ticketing._operational_data(big, None)
+    value = od["opspilot:rca"]["Value"]
+    assert len(value) <= ticketing.RCA_DATA_MAX
+    parsed = json.loads(value)
+    assert parsed["incident_id"] == "inc-ops-123" and parsed["_truncated"] is True
+
+
+def test_small_rca_is_stored_verbatim(rca):
+    assert ticketing._operational_data(rca, None)["opspilot:rca"]["Value"] == rca.model_dump_json()

@@ -32,7 +32,19 @@ class CoreStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # Ticketing is native AWS Systems Manager OpsCenter (IAM only); no ticketing secret is needed.
+        # Ticketing is native AWS Systems Manager OpsCenter (IAM only); nothing reads this secret now.
+        # DEPRECATED, kept for ONE release: stacks deployed before the OpsCenter switch have
+        # OpsPilotPipelineStack importing this secret's ARN. Deleting the secret (and so its export)
+        # in the same deploy fails: CloudFormation updates this stack first and refuses to drop an
+        # export that is still imported. This release keeps the secret and pins its export while the
+        # pipeline stops importing it; remove both in the next release.
+        self.jira_secret = secretsmanager.Secret(
+            self,
+            "JiraCredentialsSecret",
+            secret_name="opspilot/jira",
+            description="DEPRECATED (unused since OpsCenter ticketing); remove next release",
+        )
+        self.export_value(self.jira_secret.secret_arn)
 
         # AWS CodeCommit repository OpsPilot reads source from, branches, and opens fix PRs in.
         # IAM-only (no external tokens). RETAIN so `destroy` never deletes fix history; when the

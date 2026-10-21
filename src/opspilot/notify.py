@@ -212,10 +212,14 @@ def sync_ticket_status(
 
     Verified fix PR -> InProgress (human review/merge pending). Everything else stays Open with the
     reason recorded. OpsPilot never sets Resolved; the on-call engineer does after merge/mitigation.
+
+    The current status is read first: OpsPilot only moves a ticket that is still ``Open``. If a human
+    already changed it (InProgress, Resolved, ...) during the run, that status is kept and only the
+    run outcome is recorded. If the read fails, the status is left untouched (fail safe).
     """
     if not ticket or ticket.provider != "opscenter":
         return None, False
-    from opspilot.ticketing import update_ticket  # local import keeps notify importable without ssm
+    from opspilot.ticketing import get_status, update_ticket  # local import: notify works without ssm
 
     if final_status == "VERIFIED":
         status, note = "InProgress", "OpsPilot fix PR verified; awaiting human review and merge."
@@ -228,8 +232,17 @@ def sync_ticket_status(
     extra = {"run_status": final_status, "verdict": verify.verdict if verify else "unverified",
              "pr_url": pr.pr_url if pr and pr.pr_url else ""}
     try:
+        current = get_status(ticket, ssm_client=ssm_client)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not read OpsItem %s, leaving its status unchanged: %s", ticket.key, e)
+        current = None
+    if current != "Open":
+        # Human-owned (or unknown) status: record the outcome, do not move the ticket.
+        extra["proposed_status"] = status
+        status = None
+    try:
         update_ticket(ticket, status, note, extra=extra, ssm_client=ssm_client)
-        return status, True
+        return (status or current or ticket.status or "Open"), True
     except Exception as e:  # noqa: BLE001
         logger.warning("Could not update OpsItem %s: %s", ticket.key, e)
         return ticket.status or "Open", False
