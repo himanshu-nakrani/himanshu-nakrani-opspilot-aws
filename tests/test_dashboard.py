@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from dashboard.app import dashboard_app, seed_cache_from_fixtures
 
 client = TestClient(dashboard_app)
+PROBE_CALLS = []
 
 
 class _NoLiveAws:
@@ -45,6 +46,13 @@ def setup_dashboard(monkeypatch):
     import dashboard.app as app_mod
 
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    PROBE_CALLS.clear()
+
+    def _fake_probe(probe):
+        PROBE_CALLS.append(dict(probe))
+        return {"http_status": 500, "error": None, "url": "https://sample.example" + probe["path"]}
+
+    monkeypatch.setattr(app_mod, "deliver_live_probe", _fake_probe)
     monkeypatch.setattr(app_mod, "get_codebuild_client", lambda: _NoLiveAws())
     monkeypatch.setattr(app_mod, "get_pipeline_client", lambda: _NoLiveAws())
     monkeypatch.setattr(app_mod, "begin_pr_verification", _begin_without_aws)
@@ -257,9 +265,13 @@ def test_trigger_simulation_api():
     response = client.post("/api/trigger")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "success"
-    assert "incident" in data
-    assert data["incident"]["classification"] == "code_defect"
+    assert data["status"] == "accepted"
+    assert data["scenario"] == "null_order"
+    assert data["live_probe"] is True
+    assert data["ingest_mode"] == "eventbridge"
+    assert data["alarm_name"] == "OpsPilotSampleServiceErrors"
+    assert data["probe"] == "GET /orders/999"
+    assert data["incident"] is None
 
 
 def test_evals_api():
@@ -303,12 +315,18 @@ def test_evals_contract():
 
 def test_trigger_contract_and_no_fake_links():
     with TestClient(dashboard_app) as client:
+        before = {i["incident_id"] for i in client.get("/api/incidents").json()}
         data = client.post("/api/trigger").json()
-        assert {"incident_id", "summary", "simulated", "ingest_mode", "ingest_status", "failed_calls", "incident"} <= set(data)
+        assert {
+            "incident_id", "summary", "simulated", "ingest_mode", "ingest_status",
+            "failed_calls", "incident", "alarm_name", "probe", "live_probe",
+        } <= set(data)
         assert data["simulated"] is True
-        assert data["incident_id"] == data["incident"]["incident_id"]
-        assert data["incident"]["pr_url"] is None
-        assert client.get(f"/api/incidents/{data['incident_id']}").status_code == 200
+        assert data["ingest_mode"] == "eventbridge"
+        assert data["incident"] is None
+        assert data["incident_id"] == ""
+        after = {i["incident_id"] for i in client.get("/api/incidents").json()}
+        assert after == before
 
 
 def test_stats_are_derived_not_hardcoded():
@@ -341,7 +359,8 @@ def test_scenarios_catalogue_covers_every_class():
     assert {s["classification"] for s in data} == {
         "code_defect", "config_regression", "dependency", "resource", "insufficient_evidence",
     }
-    assert {"id", "label", "description", "classification", "severity", "live_probe", "expected_outcome"} <= set(data[0])
+    assert {"id", "label", "description", "classification", "severity", "live_probe", "alarm_name", "expected_outcome"} <= set(data[0])
+    assert all(s["live_probe"] is True and s["alarm_name"].startswith("OpsPilotSampleService") for s in data)
 
 
 def _scenario_rca(sid, sc):
@@ -358,37 +377,26 @@ def _scenario_rca(sid, sc):
     )
 
 
-def test_every_scenario_simulates_and_matches_router(monkeypatch):
-    """Every scenario's dashboard outcome must equal opspilot.route.route_rca, both ways."""
-    import dashboard.app as app_mod
+def test_every_scenario_calls_the_live_service():
+    """Every simulation is one request to the sample service, aimed at a real alarm."""
     from dashboard.scenarios import SCENARIOS
-    from opspilot.route import route_rca
 
-    def started(event):
-        return {"status": "started", "incident_id": f"inc-route-{event['detail']['alarmName']}"}
-
-    monkeypatch.setattr(app_mod, "handle_alarm_event", started)
+    PROBE_CALLS.clear()
     with TestClient(dashboard_app) as c:
         for sid, sc in SCENARIOS.items():
             data = c.post("/api/trigger", json={"scenario": sid}).json()
-            inc = data["incident"]
-            assert data["scenario"] == sid and inc["classification"] == sc["classification"]
-            assert inc["status"] != "DUPLICATE_SKIPPED", sid
-            route = route_rca(_scenario_rca(sid, sc))
-            if route == "propose_fix":
-                assert inc["status"] == "AWAITING_CHOICE", sid
-                assert inc["patch_diff"], sid
-                assert inc["can_raise_pr"] is True, sid
-                assert inc["human_ending"] is None, sid
-                assert inc["pr_branch"] is None, sid
-            else:
-                assert inc["status"] == "NOTIFIED", sid
-                assert inc["patch_diff"] is None and inc["pr_branch"] is None, sid
-                assert inc["can_raise_pr"] is False, sid
-                assert inc["human_ending"], sid
-                assert "A person has to handle this." in inc["human_ending"], sid
-            assert inc["pr_url"] is None
-            assert inc.get("test_status") is None and inc.get("deploy_status") is None, sid
+            assert data["scenario"] == sid, sid
+            assert data["status"] == "accepted", sid
+            assert data["live_probe"] is True, sid
+            assert data["ingest_mode"] == "eventbridge", sid
+            assert data["ingest_status"] == "waiting_for_alarm", sid
+            assert data["incident"] is None, sid
+            assert data["alarm_name"] == sc["alarm_name"], sid
+            assert data["alarm_name"].startswith("OpsPilotSampleService"), sid
+            assert "-sim-" not in data["alarm_name"], sid
+            assert data["probe"] == f"{sc['probe']['method']} {sc['probe']['path']}", sid
+            assert data["http_status"] == 500, sid
+    assert [call["path"] for call in PROBE_CALLS] == [sc["probe"]["path"] for sc in SCENARIOS.values()]
 
 
 def test_catalogue_has_both_routes():
@@ -412,63 +420,56 @@ def test_high_confidence_without_stack_frame_notifies():
     assert expected_status(sc) == "NOTIFIED"
 
 
-def test_simulation_identities_are_distinct_per_scenario():
+def test_simulation_uses_the_real_alarm_name():
     from dashboard.scenarios import SCENARIOS, simulation_alarm_name
-    names = [simulation_alarm_name(sid) for sid in SCENARIOS]
-    assert len(set(names)) == len(names)
-    assert simulation_alarm_name("null_order") == SCENARIOS["null_order"]["alarm_name"]
+    for sid, sc in SCENARIOS.items():
+        assert simulation_alarm_name(sid) == sc["alarm_name"]
+        assert sc["alarm_name"].startswith("OpsPilotSampleService")
+        assert "-sim-" not in sc["alarm_name"]
+        assert sc["probe"]["method"] in {"GET", "POST"}
+        assert sc["probe"]["path"].startswith("/")
 
 
-def test_different_scenarios_do_not_dedupe_but_repeats_do(monkeypatch):
-    """With a deduping ingest (as in live AWS mode), two different scenarios in one window are
-    separate incidents, and re-running the same scenario is skipped as a duplicate."""
-    import dashboard.app as app_mod
-    from datetime import datetime, timezone
-    from opspilot.ingest import compute_incident_id
-
-    seen = set()
-
-    def fake_ingest(event):
-        when = datetime.fromisoformat(event["time"])
-        inc_id, _, _ = compute_incident_id(event["detail"]["alarmName"], when.replace(minute=0, second=0))
-        if inc_id in seen:
-            return {"status": "duplicate", "incident_id": inc_id}
-        seen.add(inc_id)
-        return {"status": "started", "incident_id": inc_id}
-
-    monkeypatch.setattr(app_mod, "handle_alarm_event", fake_ingest)
+def test_repeat_triggers_each_call_the_sample_service():
+    """Dedup happens when EventBridge delivers the alarm, so each click still sends the probe."""
     with TestClient(dashboard_app) as c:
-        first = c.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
-        other = c.post("/api/trigger", json={"scenario": "config_env"}).json()["incident"]
-        again = c.post("/api/trigger", json={"scenario": "config_env"}).json()["incident"]
-    assert first["status"] == "AWAITING_CHOICE"
-    assert other["status"] == "NOTIFIED"
-    assert again["status"] == "DUPLICATE_SKIPPED"
+        first = c.post("/api/trigger", json={"scenario": "null_order"}).json()
+        other = c.post("/api/trigger", json={"scenario": "config_env"}).json()
+        again = c.post("/api/trigger", json={"scenario": "config_env"}).json()
+    assert first["probe"] == "GET /orders/999"
+    assert first["alarm_name"] == "OpsPilotSampleServiceErrors"
+    assert other["probe"] == again["probe"] == "GET /settings"
+    assert other["alarm_name"] == "OpsPilotSampleService-ConfigErrors"
+    assert first["incident"] is other["incident"] is again["incident"] is None
 
 
-def test_planted_faults_end_as_a_patch_or_a_person(monkeypatch):
-    """Checkout and the legacy payment delay can raise a PR. Inventory and the export cannot."""
-    import dashboard.app as app_mod
+def test_planted_faults_aim_at_their_alarms():
+    """Each planted fault calls the live route that the matching CloudWatch alarm watches."""
+    from dashboard.endings import human_ending_text
+    from dashboard.scenarios import SCENARIOS
 
-    seq = {"n": 0}
-
-    def started(_event):
-        seq["n"] += 1
-        return {"status": "started", "incident_id": f"inc-ending-{seq['n']}"}
-
-    monkeypatch.setattr(app_mod, "handle_alarm_event", started)
+    assert SCENARIOS["unknown_coupon"]["probe"]["path"].startswith("/checkout")
+    assert SCENARIOS["unknown_coupon"]["alarm_name"] == "OpsPilotSampleService-CheckoutErrors"
+    assert SCENARIOS["legacy_payment"]["alarm_name"] == "OpsPilotSampleService-LatencyP95"
+    assert "provider=legacy" in SCENARIOS["legacy_payment"]["probe"]["path"]
+    assert SCENARIOS["inventory_timeout"]["alarm_name"] == "OpsPilotSampleService-InventoryDbTimeouts"
+    assert SCENARIOS["report_export"]["alarm_name"] == "OpsPilotSampleService-Crashes"
+    inventory_note = human_ending_text({
+        "status": "NOTIFIED",
+        "classification": "dependency",
+        "summary": "Inventory lookup for BULK-42 hits a database timeout.",
+        "suspected_location": {"function": "inventory"},
+    })
+    export_note = human_ending_text({
+        "status": "NOTIFIED",
+        "classification": "resource",
+        "summary": "The report export runs out of memory.",
+        "suspected_location": {"function": "export_report"},
+    })
+    assert inventory_note and "database timeout" in inventory_note
+    assert export_note and "export runs out of memory" in export_note
     with TestClient(dashboard_app) as c:
-        coupon = c.post("/api/trigger", json={"scenario": "unknown_coupon"}).json()["incident"]
-        legacy = c.post("/api/trigger", json={"scenario": "legacy_payment"}).json()["incident"]
-        inventory = c.post("/api/trigger", json={"scenario": "inventory_timeout"}).json()["incident"]
-        report = c.post("/api/trigger", json={"scenario": "report_export"}).json()["incident"]
         orders = c.get("/api/incidents/inc-eval-01").json()
-    assert coupon["can_raise_pr"] is True and "invalid coupon" in coupon["patch_diff"]
-    assert coupon["human_ending"] is None and coupon.get("test_status") is None
-    assert legacy["can_raise_pr"] is True and "pass" in legacy["patch_diff"]
-    assert inventory["can_raise_pr"] is False and inventory["patch_diff"] is None
-    assert "database timeout" in inventory["human_ending"]
-    assert report["can_raise_pr"] is False and "export runs out of memory" in report["human_ending"]
     assert orders["can_raise_pr"] is True and orders["human_ending"] is None
     assert orders.get("pr_url") is None and orders.get("deploy_status") is None and orders.get("test_status") is None
 
@@ -529,16 +530,35 @@ def test_unknown_scenario_is_rejected():
         assert c.post("/api/trigger", json={"scenario": "nope"}).status_code == 400
 
 
+def _seed_incident(inc_id: str, **overrides) -> str:
+    from dashboard.app import LOCAL_INCIDENTS_CACHE
+
+    row = {
+        "incident_id": inc_id,
+        "service": "sample-service",
+        "alarm_name": "OpsPilotSampleServiceErrors",
+        "detected_at": "2026-10-23T00:00:00+00:00",
+        "status": "AWAITING_CHOICE",
+        "classification": "code_defect",
+        "confidence": 0.94,
+        "severity": "sev2",
+        "summary": "AttributeError on missing order ID",
+        "suspected_location": {"file": "sample_service/app.py", "line": 36, "function": "get_order"},
+        "evidence": [{"kind": "stack_frame", "ref": "sample_service/app.py:36", "claim": "order.total"}],
+        "suggested_fix_strategy": "Return 404 when the order is missing.",
+        "patch_diff": None,
+        "pr_url": None,
+        "source": "fixture",
+    }
+    row.update(overrides)
+    LOCAL_INCIDENTS_CACHE.insert(0, row)
+    return inc_id
+
+
 def test_fix_choice_apply_myself_or_raise_pr(monkeypatch):
     """Apply-myself can still raise a PR. A second raise after that PR is open is refused."""
     import dashboard.app as app_mod
     from opspilot.contracts import PrRef
-
-    seq = {"n": 0}
-
-    def fake_ingest(_event):
-        seq["n"] += 1
-        return {"status": "started", "incident_id": f"inc-choice-{seq['n']}"}
 
     def fake_propose(rca, ticket, **kwargs):
         assert os.environ.get("CODECOMMIT_REPO") == "opspilot-sample-service"
@@ -551,10 +571,10 @@ def test_fix_choice_apply_myself_or_raise_pr(monkeypatch):
             pr_number=9,
         )
 
-    monkeypatch.setattr(app_mod, "handle_alarm_event", fake_ingest)
     monkeypatch.setattr(app_mod, "propose_fix", fake_propose)
     with TestClient(dashboard_app) as c:
-        first = c.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
+        first_id = _seed_incident("inc-choice-orders")
+        first = c.get(f"/api/incidents/{first_id}").json()
         assert first["status"] == "AWAITING_CHOICE" and first["pr_url"] is None and first["patch_diff"]
 
         manual = c.post(f"/api/incidents/{first['incident_id']}/fix-choice", json={"action": "apply_myself"})
@@ -586,7 +606,8 @@ def test_fix_choice_apply_myself_or_raise_pr(monkeypatch):
         assert live.json()["error"] is None
         assert live.json()["pr_url"] == "https://codecommit.example/pr/9"
 
-        second = c.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
+        second_id = _seed_incident("inc-choice-orders-2")
+        second = c.get(f"/api/incidents/{second_id}").json()
         assert "status_code=404" in second["patch_diff"] and second["can_raise_pr"] is True
         raised = c.post(f"/api/incidents/{second['incident_id']}/fix-choice", json={"action": "raise_pr"})
         assert raised.status_code == 200, raised.text
@@ -600,7 +621,14 @@ def test_fix_choice_apply_myself_or_raise_pr(monkeypatch):
         assert opened["human_ending"] is None
         assert "deploy has not started" in (opened.get("deploy_summary") or "")
 
-        missing = c.post("/api/trigger", json={"scenario": "missing_field"}).json()["incident"]
+        missing_id = _seed_incident(
+            "inc-choice-create",
+            summary="Unhandled KeyError customer_id in create_order",
+            suspected_location={"file": "sample_service/app.py", "line": 43, "function": "create_order"},
+            evidence=[{"kind": "stack_frame", "ref": "sample_service/app.py:43", "claim": "payload['customer_id']"}],
+            suggested_fix_strategy="Validate the request body and return 422 when customer_id is missing.",
+        )
+        missing = c.get(f"/api/incidents/{missing_id}").json()
         assert missing["suspected_location"]["function"] == "create_order"
         assert "customer_id is required" in missing["patch_diff"]
         assert "status_code=422" in missing["patch_diff"]
@@ -623,7 +651,18 @@ def test_fix_choice_apply_myself_or_raise_pr(monkeypatch):
         assert created.json()["pr_url"] == "https://codecommit.example/pr/10"
         assert "customer_id is required" in created.json()["patch_diff"]
 
-        notified = c.post("/api/trigger", json={"scenario": "config_env"}).json()["incident"]
+        notified_id = _seed_incident(
+            "inc-choice-config",
+            status="NOTIFIED",
+            classification="config_regression",
+            confidence=0.88,
+            summary="Configuration regression: ORDERS_TABLE env var missing after the latest deploy.",
+            suspected_location=None,
+            evidence=[{"kind": "log_line", "ref": "log-1", "claim": "KeyError: 'ORDERS_TABLE'"}],
+            suggested_fix_strategy="Restore ORDERS_TABLE in the Lambda environment and redeploy.",
+            alarm_name="OpsPilotSampleService-ConfigErrors",
+        )
+        notified = c.get(f"/api/incidents/{notified_id}").json()
         assert notified["can_raise_pr"] is False
         assert c.post(f"/api/incidents/{notified['incident_id']}/fix-choice", json={"action": "raise_pr"}).status_code == 400
 
@@ -778,10 +817,10 @@ def test_second_raise_after_pr_opened_is_refused(monkeypatch):
             pr_number=11,
         )
 
-    monkeypatch.setattr(app_mod, "handle_alarm_event", lambda _event: {"status": "started", "incident_id": "inc-choice-once"})
     monkeypatch.setattr(app_mod, "propose_fix", fake_propose)
     with TestClient(dashboard_app) as c:
-        inc = c.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
+        inc_id = _seed_incident("inc-choice-once")
+        inc = c.get(f"/api/incidents/{inc_id}").json()
         applied = c.post(f"/api/incidents/{inc['incident_id']}/fix-choice", json={"action": "apply_myself"})
         assert applied.status_code == 200
         raised = c.post(f"/api/incidents/{inc['incident_id']}/fix-choice", json={"action": "raise_pr"})
@@ -820,11 +859,17 @@ def test_unknown_run_is_404():
         assert c.get("/api/runs/nope").status_code == 404
 
 
-def test_simulated_incidents_have_no_agent_run():
+def test_trigger_leaves_the_agent_to_the_pipeline():
+    """The dashboard records the probe. RunRCA, started by EventBridge, owns the agent trace."""
+    from dashboard.app import AGENT_RUNS
+
+    before = set(AGENT_RUNS)
     with TestClient(dashboard_app) as c:
-        res = c.post("/api/trigger", json={"scenario": "dependency_timeout"}).json()
-        inc = res.get("incident") or {}
-        assert not inc.get("agent_run_id")
+        data = c.post("/api/trigger", json={"scenario": "unknown_coupon"}).json()
+        assert data["probe"] == "GET /checkout?sku=SKU-1&qty=2&coupon=SPRING50"
+        assert data["alarm_name"] == "OpsPilotSampleService-CheckoutErrors"
+        assert data["incident"] is None
+        assert set(AGENT_RUNS) == before
 
 
 def test_build_spans_pairs_tool_history_and_flags_blocked_calls():

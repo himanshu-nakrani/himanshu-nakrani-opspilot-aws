@@ -1,10 +1,9 @@
-"""Canned incident scenarios for the dashboard's "Simulate incident" demo.
+"""Incident scenarios the dashboard can fire on the deployed sample service.
 
-Each scenario is a believable alarm for sample-service with a pre-written RCA. Only
-``null_order`` drives real traffic (5 calls to the planted /orders/999 bug); the rest are
-synthetic alarms. Outcomes follow opspilot.route: a suggested diff is offered only for a code_defect
-at >= 0.60 confidence whose suspected location is named by a stack_frame. The pipeline
-does not open the pull request; the incident screen does. Everything else notifies the SRE.
+Each scenario has a live ``probe``: one HTTP call to the sample service. That call writes
+an error (or a slow request) to CloudWatch Logs. The matching alarm, whose name starts
+with ``OpsPilotSampleService``, notifies EventBridge, and the pipeline runs the RCA agent.
+The catalogue text is only a label for the button. The agent writes the incident.
 """
 
 from typing import Any, Dict, List, Optional
@@ -17,7 +16,7 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     "null_order": {
         "label": "Null order lookup",
         "description": "GET /orders/999 hits the planted bug: None.total raises AttributeError.",
-        "probe_path": "/orders/999",
+        "probe": {"method": "GET", "path": "/orders/999"},
         "alarm_name": "OpsPilotSampleServiceErrors",
         "alarm_reason": "{failed} unhandled AttributeError tracebacks",
         "classification": "code_defect",
@@ -35,6 +34,7 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     "missing_field": {
         "label": "Missing request field",
         "description": "POST /orders without customer_id raises KeyError in create_order().",
+        "probe": {"method": "POST", "path": "/orders", "json": {}},
         "alarm_name": "OpsPilotSampleServiceErrors",
         "alarm_reason": "12 unhandled KeyError tracebacks in 5 minutes",
         "classification": "code_defect",
@@ -52,6 +52,7 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     "unknown_coupon": {
         "label": "Unknown coupon",
         "description": "GET /checkout with coupon SPRING50 raises KeyError because the code is not in the catalog.",
+        "probe": {"method": "GET", "path": "/checkout?sku=SKU-1&qty=2&coupon=SPRING50"},
         "alarm_name": "OpsPilotSampleService-CheckoutErrors",
         "alarm_reason": "KeyError SPRING50 on checkout",
         "classification": "code_defect",
@@ -69,6 +70,7 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     "legacy_payment": {
         "label": "Legacy payment delay",
         "description": "GET /payments/77/status?provider=legacy blocks on the legacy gateway.",
+        "probe": {"method": "GET", "path": "/payments/77/status?provider=legacy"},
         "alarm_name": "OpsPilotSampleService-LatencyP95",
         "alarm_reason": "legacy provider latency",
         "classification": "code_defect",
@@ -86,6 +88,7 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     "inventory_timeout": {
         "label": "Inventory database timeout",
         "description": "GET /inventory/BULK-42 waits on inventory-db and raises TimeoutError.",
+        "probe": {"method": "GET", "path": "/inventory/BULK-42"},
         "alarm_name": "OpsPilotSampleService-InventoryDbTimeouts",
         "alarm_reason": "inventory-db connection timeouts",
         "classification": "dependency",
@@ -101,6 +104,7 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     "report_export": {
         "label": "Report export out of memory",
         "description": "GET /reports/export?days=90 buffers the whole export and runs out of memory.",
+        "probe": {"method": "GET", "path": "/reports/export?days=90"},
         "alarm_name": "OpsPilotSampleService-Crashes",
         "alarm_reason": "Runtime.OutOfMemory during export",
         "classification": "resource",
@@ -115,8 +119,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     },
     "divide_by_zero": {
         "label": "Low-confidence code defect",
-        "description": "ZeroDivisionError with a partial stack trace; confidence is below the 0.60 fix threshold.",
-        "alarm_name": "OpsPilotSampleServiceErrors",
+        "description": "GET /basket/average?count=0 divides by an empty order list.",
+        "probe": {"method": "GET", "path": "/basket/average?count=0"},
+        "alarm_name": "OpsPilotSampleService-BasketErrors",
         "alarm_reason": "3 ZeroDivisionError tracebacks in 5 minutes",
         "classification": "code_defect",
         "confidence": 0.52,
@@ -130,8 +135,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     },
     "config_env": {
         "label": "Missing env variable",
-        "description": "A deploy dropped ORDERS_TABLE; every request fails at startup.",
-        "alarm_name": "OpsPilotSampleServiceErrors",
+        "description": "GET /settings reads ORDERS_TABLE and raises KeyError when the deploy dropped it.",
+        "probe": {"method": "GET", "path": "/settings"},
+        "alarm_name": "OpsPilotSampleService-ConfigErrors",
         "alarm_reason": "100% error rate after deploy",
         "classification": "config_regression",
         "confidence": 0.88,
@@ -146,8 +152,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     },
     "payment_timeout": {
         "label": "Payment gateway timeout",
-        "description": "Downstream payment API stops responding; httpx.ReadTimeout on checkout.",
-        "alarm_name": "OpsPilotSampleServiceLatency",
+        "description": "GET /payments/77/status?provider=down raises a read timeout from the payment gateway.",
+        "probe": {"method": "GET", "path": "/payments/77/status?provider=down"},
+        "alarm_name": "OpsPilotSampleService-PaymentTimeouts",
         "alarm_reason": "p99 latency above 10s for 3 datapoints",
         "classification": "dependency",
         "confidence": 0.86,
@@ -162,8 +169,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     },
     "ddb_throttle": {
         "label": "DynamoDB throttling",
-        "description": "Order writes hit ProvisionedThroughputExceededException during a traffic spike.",
-        "alarm_name": "OpsPilotSampleServiceErrors",
+        "description": "POST /writes/orders raises ProvisionedThroughputExceededException.",
+        "probe": {"method": "POST", "path": "/writes/orders", "json": {}},
+        "alarm_name": "OpsPilotSampleService-WriteThrottles",
         "alarm_reason": "Throttled writes above threshold",
         "classification": "dependency",
         "confidence": 0.81,
@@ -178,8 +186,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     },
     "db_pool": {
         "label": "Connection pool exhausted",
-        "description": "All database connections are held; new requests time out waiting.",
-        "alarm_name": "OpsPilotSampleServiceErrors",
+        "description": "GET /inventory/BULK-42 exhausts the inventory database connection pool.",
+        "probe": {"method": "GET", "path": "/inventory/BULK-42"},
+        "alarm_name": "OpsPilotSampleService-InventoryDbTimeouts",
         "alarm_reason": "Error rate above 25%",
         "classification": "resource",
         "confidence": 0.85,
@@ -194,8 +203,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     },
     "lambda_oom": {
         "label": "Lambda out of memory",
-        "description": "Invocations exceed the 512 MB limit while exporting a large report.",
-        "alarm_name": "OpsPilotSampleServiceErrors",
+        "description": "GET /reports/export?days=90 exceeds the Lambda memory limit.",
+        "probe": {"method": "GET", "path": "/reports/export?days=90"},
+        "alarm_name": "OpsPilotSampleService-Crashes",
         "alarm_reason": "Runtime.OutOfMemory on 8 invocations",
         "classification": "resource",
         "confidence": 0.83,
@@ -210,8 +220,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     },
     "latency_no_errors": {
         "label": "Latency spike, no errors",
-        "description": "Latency rises with no errors or stack traces in the logs; the agent abstains.",
-        "alarm_name": "OpsPilotSampleServiceLatency",
+        "description": "GET /payments/77/status?provider=legacy holds the request with no thrown error.",
+        "probe": {"method": "GET", "path": "/payments/77/status?provider=legacy"},
+        "alarm_name": "OpsPilotSampleService-LatencyP95",
         "alarm_reason": "p95 latency above 2s",
         "classification": "insufficient_evidence",
         "confidence": 0.3,
@@ -235,7 +246,8 @@ def list_scenarios() -> List[Dict[str, Any]]:
             "description": s["description"],
             "classification": s["classification"],
             "severity": s["severity"],
-            "live_probe": bool(s.get("probe_path")),
+            "live_probe": bool(s.get("probe")),
+            "alarm_name": s["alarm_name"],
             "expected_outcome": expected_status(s),
         }
         for sid, s in SCENARIOS.items()
@@ -243,18 +255,8 @@ def list_scenarios() -> List[Dict[str, Any]]:
 
 
 def simulation_alarm_name(scenario_id: str) -> str:
-    """Alarm identity sent to ingest for a simulated scenario.
-
-    Ingest dedupes on sha256(alarm_name + 15-minute window), and several scenarios share a
-    CloudWatch alarm name. Synthetic scenarios get a per-scenario suffix so two different
-    scenarios in the same window are separate incidents, while repeat runs of the same
-    scenario still dedupe. The live-probe scenario keeps the real alarm name, so it dedupes
-    with the alarm CloudWatch would raise for the same traffic.
-    """
-    sc = SCENARIOS[scenario_id]
-    if sc.get("probe_path"):
-        return sc["alarm_name"]
-    return f"{sc['alarm_name']}-sim-{scenario_id}"
+    """CloudWatch alarm the probe trips. EventBridge matches the OpsPilotSampleService prefix."""
+    return SCENARIOS[scenario_id]["alarm_name"]
 
 
 def expected_status(s: Dict[str, Any]) -> str:

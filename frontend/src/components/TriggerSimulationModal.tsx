@@ -110,7 +110,7 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
   const inc = result?.incident;
   const footer = (
     <>
-      <span className="text-xs text-ink-400">Demo only: the RCA shown is a canned example and no real ticket or PR is created.</span>
+      <span className="text-xs text-ink-400">The incident appears here after EventBridge starts the pipeline.</span>
       <div className="flex gap-2">
         {(phase === 'idle' || phase === 'error') && (
           <button
@@ -154,7 +154,7 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
             ) : (
               <Play className="w-3.5 h-3.5" aria-hidden="true" />
             )}
-            {phase === 'running' ? 'Running…' : phase === 'error' ? 'Try again' : 'Run simulation'}
+            {phase === 'running' ? 'Running…' : phase === 'error' ? 'Try again' : phase === 'done' ? 'Run again' : 'Run simulation'}
           </button>
         )}
       </div>
@@ -168,7 +168,7 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
       size="md"
       icon={<Siren className="w-5 h-5 text-red-400 mt-0.5" aria-hidden="true" />}
       title="Simulate incident"
-      description="Pick a failure to inject. The alarm is ingested and a canned RCA is attached."
+      description="Pick a failure. The sample service writes it to CloudWatch, and EventBridge starts the pipeline."
       footer={footer}
     >
       <div aria-live="polite" className="space-y-3">
@@ -195,11 +195,11 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
                     <span className="flex items-center gap-1.5 font-mono text-2xs text-ink-500">
                       <span className="capitalize">{humanize(sc.classification)}</span>
                       <span aria-hidden="true">·</span>
-                      <span>{sc.expected_outcome === 'AWAITING_CHOICE' ? 'fix ready to review' : 'notifies SRE'}</span>
-                      {sc.live_probe && (
+                      <span className="text-ink-300">live service</span>
+                      {sc.alarm_name && (
                         <>
                           <span aria-hidden="true">·</span>
-                          <span className="text-ink-300">live traffic</span>
+                          <span className="truncate">{sc.alarm_name}</span>
                         </>
                       )}
                     </span>
@@ -211,7 +211,7 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
         )}
         {phase === 'running' && (
           <p role="status" className="text-sm text-ink-300">
-            Calling the sample service and ingesting the alarm…
+            Calling the sample service so CloudWatch can raise the alarm…
           </p>
         )}
         {phase === 'error' && (
@@ -246,7 +246,7 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
                         </span>
                       )}
                       {row.state === 'failed' && <span className="text-red-300" title={row.error}>failed</span>}
-                      {row.state === 'ok' && (ri ? ri.status : row.result?.ingest_status)}
+                      {row.state === 'ok' && (ri ? ri.status : 'sent')}
                     </span>
                     {row.state === 'ok' && ri && !batchRunning && (
                       <button
@@ -263,20 +263,22 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
             </ul>
           </div>
         )}
-        {phase === 'done' && result && inc && (
+        {phase === 'done' && result && (
           <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-2 text-xs font-mono bg-ink-950 border border-ink-800 rounded-lg p-4">
-            <dt className="text-ink-400">Traffic</dt>
-            <dd className="text-ink-200">{result.live_probe === false ? 'Synthetic alarm, no requests sent' : `${result.failed_calls} / 5 requests returned 5xx`}</dd>
-            <dt className="text-ink-400">Ingest</dt>
-            <dd className="text-ink-200">
-              {result.ingest_status} ({result.ingest_mode === 'offline' ? 'offline, no AWS credentials' : 'live'})
-            </dd>
-            <dt className="text-ink-400">Incident</dt>
-            <dd className="text-ink-200 break-all">{result.incident_id}</dd>
-            <dt className="text-ink-400">Status</dt>
-            <dd className="text-ink-200">{inc.status}</dd>
-            <dt className="text-ink-400">Summary</dt>
-            <dd className="text-ink-200 font-sans">{result.summary}</dd>
+            <dt className="text-ink-400">Request</dt>
+            <dd className="text-ink-200 break-all">{result.probe || 'sample service'}</dd>
+            <dt className="text-ink-400">Alarm</dt>
+            <dd className="text-ink-200 break-all">{result.alarm_name || 'CloudWatch'}</dd>
+            <dt className="text-ink-400">Service</dt>
+            <dd className="text-ink-200">{result.http_status ?? 'no HTTP status'}</dd>
+            <dt className="text-ink-400">Next</dt>
+            <dd className="text-ink-200 font-sans">{result.message}</dd>
+            {inc && (
+              <>
+                <dt className="text-ink-400">Incident</dt>
+                <dd className="text-ink-200 break-all">{inc.incident_id}</dd>
+              </>
+            )}
           </dl>
         )}
       </div>

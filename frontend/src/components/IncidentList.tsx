@@ -216,7 +216,7 @@ export const IncidentList: React.FC<IncidentListProps> = ({
                 Clear filters
               </button>
             ) : (
-              'Use “Simulate incident” to create one.'
+              'Use “Simulate incident” to send a live error. The row appears after the pipeline runs.'
             )}
           </p>
         </div>

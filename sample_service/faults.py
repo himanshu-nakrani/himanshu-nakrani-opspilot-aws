@@ -11,6 +11,10 @@ fires for a specific input, so a demo can break the service on demand:
     inventory   GET /inventory/BULK-42                    TimeoutError (DB)  dependency -> notify on-call
     payments    GET /payments/77/status?provider=legacy   6 s latency        dependency -> notify on-call
     reports     GET /reports/export?days=90               Lambda OOM crash   resource -> notify on-call
+    basket      GET /basket/average?count=0               ZeroDivisionError  code_defect -> notify on-call
+    settings    GET /settings                             KeyError           config_regression -> notify on-call
+    payments    GET /payments/77/status?provider=down     TimeoutError       dependency -> notify on-call
+    writes      POST /writes/orders                       throttle           dependency -> notify on-call
 
 Every request writes one JSON line (``event`` = ``request`` or
 ``unhandled_exception``) so CloudWatch metric filters can count errors per
@@ -86,6 +90,34 @@ FAULTS: List[Dict[str, str]] = [
         "symptom": "Lambda killed: export buffers the whole history in memory (Runtime.OutOfMemory)",
         "alarm": "OpsPilotSampleService-Crashes",
         "expected_route": "resource -> OpsCenter OpsItem -> notify on-call (no PR)",
+    },
+    {
+        "id": "basket",
+        "trigger": "GET /basket/average?count=0",
+        "symptom": "500: ZeroDivisionError while averaging an empty order list",
+        "alarm": "OpsPilotSampleService-BasketErrors",
+        "expected_route": "code_defect below the fix threshold -> notify on-call",
+    },
+    {
+        "id": "settings",
+        "trigger": "GET /settings",
+        "symptom": "500: KeyError 'ORDERS_TABLE' after the setting was dropped",
+        "alarm": "OpsPilotSampleService-ConfigErrors",
+        "expected_route": "config_regression -> notify on-call (no PR)",
+    },
+    {
+        "id": "payments_down",
+        "trigger": "GET /payments/77/status?provider=down",
+        "symptom": "500: TimeoutError from the payment gateway",
+        "alarm": "OpsPilotSampleService-PaymentTimeouts",
+        "expected_route": "dependency -> notify on-call (no PR)",
+    },
+    {
+        "id": "writes",
+        "trigger": "POST /writes/orders",
+        "symptom": "500: ProvisionedThroughputExceededException on the orders table",
+        "alarm": "OpsPilotSampleService-WriteThrottles",
+        "expected_route": "dependency -> notify on-call (no PR)",
     },
 ]
 
@@ -197,10 +229,30 @@ def install(app: FastAPI) -> None:
 
     @app.get("/payments/{order_id}/status")
     def payment_status(order_id: str, provider: str = "stripe"):
+        if provider == "down":
+            raise TimeoutError("httpx.ReadTimeout: The read operation timed out")
         if provider == "legacy":
             # Planted latency: the legacy gateway is called synchronously with no timeout.
             time.sleep(LEGACY_GATEWAY_LATENCY_S)
         return {"order_id": order_id, "provider": provider, "status": "captured"}
+
+    @app.get("/basket/average")
+    def average_basket(count: int = 0):
+        # Planted bug: an empty order list divides by zero.
+        total = 100
+        return {"count": count, "average": total / count}
+
+    @app.get("/settings")
+    def load_settings():
+        # Planted config fault: the orders table name was removed from the environment.
+        raise KeyError("ORDERS_TABLE")
+
+    @app.post("/writes/orders")
+    def write_order():
+        raise RuntimeError(
+            "ProvisionedThroughputExceededException: The level of configured provisioned "
+            "throughput for the table was exceeded"
+        )
 
     @app.get("/reports/export")
     def export_report(days: int = 7):

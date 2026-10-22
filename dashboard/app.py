@@ -17,6 +17,8 @@ import logging
 import os
 import re
 import time
+import urllib.error
+import urllib.request
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
@@ -25,7 +27,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from dashboard.endings import human_ending_text
@@ -38,19 +39,15 @@ from opspilot.fix.scm import get_scm_client
 from opspilot.knowledge.document import public_knowledge
 from opspilot.knowledge.ingest import sync_merged_solution
 from opspilot.verify.pr_check import BUILD_NOT_STARTED, begin_pr_verification, public_test, refresh_verification
-from opspilot.ingest import handle_alarm_event
 from opspilot.rca.agent import analyze_heuristically, run_rca_agent
 from opspilot.agentcore.runtime import AgentCoreOfflineModel, AgentCoreRuntime
 from dashboard.runs import build_agent_run, summarize as summarize_run
 from opspilot.route import route_rca
 from opspilot.ticketing import list_opscenter_tickets
-from sample_service.app import app as sample_app
 from dashboard.scenarios import (
     DEFAULT_SCENARIO,
     SCENARIOS,
-    expected_status,
     list_scenarios,
-    simulation_alarm_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -844,103 +841,108 @@ def get_scenarios() -> List[Dict[str, Any]]:
     return list_scenarios()
 
 
+def sample_service_base_url() -> str:
+    """Public URL of the deployed sample service."""
+    configured = os.environ.get("SAMPLE_SERVICE_URL", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+    cf = boto3.client("cloudformation", region_name=region)
+    stacks = cf.describe_stacks(StackName="OpsPilotSampleServiceStack")["Stacks"]
+    for output in stacks[0].get("Outputs", []):
+        if output.get("OutputKey") == "SampleServiceUrl" and output.get("OutputValue"):
+            return str(output["OutputValue"]).rstrip("/")
+    raise HTTPException(
+        status_code=503,
+        detail="Sample service URL is not set. Set SAMPLE_SERVICE_URL or deploy OpsPilotSampleServiceStack.",
+    )
+
+
+def deliver_live_probe(probe: Dict[str, Any]) -> Dict[str, Any]:
+    """Send one request to the deployed sample service so CloudWatch can raise its alarm."""
+    path = str(probe["path"])
+    if not path.startswith("/"):
+        path = "/" + path
+    url = sample_service_base_url() + path
+    method = str(probe.get("method") or "GET").upper()
+    data = None
+    headers: Dict[str, str] = {}
+    if "json" in probe:
+        data = json.dumps(probe["json"]).encode()
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=40) as response:
+            response.read()
+            return {"http_status": response.status, "error": None, "url": url}
+    except urllib.error.HTTPError as exc:
+        return {"http_status": exc.code, "error": None, "url": url}
+    except Exception as exc:  # noqa: BLE001 - OOM and gateway timeouts still reached Lambda
+        return {"http_status": None, "error": str(exc), "url": url}
+
+
 @dashboard_app.post("/api/trigger")
 def trigger_incident_simulation(body: Optional[TriggerRequest] = None) -> Dict[str, Any]:
-    """Simulate an incident from the scenario catalogue (default: the planted null-order bug).
+    """Call the sample service so an error reaches CloudWatch and EventBridge starts the pipeline.
 
-    This is a demo path. The RCA fields are a canned example, and the response is flagged
-    ``simulated`` so the UI can label it; no real ticket or PR is created. Only scenarios
-    with a ``probe_path`` send real traffic to sample_service.
+    The RCA agent runs inside that pipeline. This process does not analyze the logs and
+    does not open an incident row of its own.
     """
     scenario_id = (body.scenario if body and body.scenario else DEFAULT_SCENARIO)
     sc = SCENARIOS.get(scenario_id)
     if sc is None:
         raise HTTPException(status_code=400, detail=f"Unknown scenario '{scenario_id}'")
+    probe = sc.get("probe")
+    if not probe:
+        raise HTTPException(status_code=400, detail=f"Scenario '{scenario_id}' has no live probe")
 
-    failed_calls = 0
-    probe_path = sc.get("probe_path")
-    if probe_path:
-        client = TestClient(sample_app, raise_server_exceptions=False)
-        for _ in range(5):
-            if client.get(probe_path).status_code >= 500:
-                failed_calls += 1
-
-    now = datetime.now(timezone.utc).isoformat()
-    alarm_name = simulation_alarm_name(scenario_id)
-    alarm_event = {
-        "source": "aws.cloudwatch",
-        "detail-type": "CloudWatch Alarm State Change",
-        "time": now,
-        "detail": {
-            "alarmName": alarm_name,
-            "state": {
-                "value": "ALARM",
-                "timestamp": now,
-                "reason": "Threshold Crossed: " + sc["alarm_reason"].format(failed=failed_calls),
-            },
-        },
-    }
-
-    ingest_mode = "live"
     try:
-        res = handle_alarm_event(alarm_event)
-        inc_id = res.get("incident_id") or f"inc-{int(time.time())}"
-    except Exception as e:
-        logger.info("Local mode: handle_alarm_event simulated without AWS credentials: %s", e)
-        ingest_mode = "offline"
-        res = {"status": "started"}
-        inc_id = f"inc-sim-{int(time.time() * 1000)}"
+        delivered = deliver_live_probe(probe)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Live probe for %s failed before the request: %s", scenario_id, exc)
+        raise HTTPException(status_code=503, detail=f"Could not reach the sample service: {exc}") from exc
 
-    ingest_status = res.get("status", "unknown")
-    duplicate = ingest_status != "started"
-    outcome = expected_status(sc)
-    awaiting = outcome == "AWAITING_CHOICE" and not duplicate
-    ticket_key = f"OPS-{stable_ticket_number(inc_id)}"
-
-    new_inc = {
-        "incident_id": inc_id,
-        "service": "sample-service",
-        "alarm_name": alarm_name,
-        "detected_at": now,
-        "status": "DUPLICATE_SKIPPED" if duplicate else outcome,
-        "classification": sc["classification"],
-        "confidence": sc["confidence"],
-        "severity": sc["severity"],
-        "summary": sc["summary"],
-        "suspected_location": sc.get("suspected_location"),
-        "evidence": sc["evidence"],
-        "ticket_key": None if duplicate else ticket_key,
-        "ticket_url": None,
-        "pr_branch": None,
-        "pr_url": None,
-        "patch_diff": sc.get("patch_diff") if awaiting else None,
-        "can_raise_pr": False,
-        "suggested_fix_strategy": sc.get("suggested_fix_strategy"),
-        "source": "simulated",
-        "scenario": scenario_id,
-    }
-    apply_fix_offer(new_inc)
-    new_inc["human_ending"] = human_ending_text(new_inc)
-    LOCAL_INCIDENTS_CACHE.insert(0, new_inc)
-    del LOCAL_INCIDENTS_CACHE[LOCAL_INCIDENTS_CACHE_MAX:]
-
-    if probe_path:
-        message = f"{failed_calls} calls to {probe_path} returned 5xx. Ingested incident {inc_id} ({ingest_mode} mode)."
+    alarm_name = sc["alarm_name"]
+    method = str(probe.get("method") or "GET").upper()
+    call = f"{method} {probe['path']}"
+    http_status = delivered.get("http_status")
+    if delivered.get("error") and http_status is None:
+        detail = f"The call did not return a normal HTTP response ({delivered['error']})."
+        failed_calls = 1
+    elif http_status == 404:
+        detail = (
+            f"The sample service returned HTTP 404. Deploy OpsPilotSampleServiceStack so {call} is live, "
+            "then run this scenario again."
+        )
+        failed_calls = 0
+    elif isinstance(http_status, int):
+        detail = f"The sample service returned HTTP {http_status}."
+        failed_calls = 1 if http_status >= 500 else 0
     else:
-        message = f"Synthetic alarm '{sc['label']}'. Ingested incident {inc_id} ({ingest_mode} mode)."
-
+        detail = "The sample service accepted the call."
+        failed_calls = 0
+    message = (
+        f"Called {call}. {detail} CloudWatch alarm {alarm_name} notifies EventBridge when it enters ALARM, "
+        "and the pipeline runs the agent on those logs. A repeat of the same alarm inside 15 minutes is skipped "
+        "until the alarm returns to OK."
+    )
     return {
-        "status": "success",
+        "status": "accepted",
         "simulated": True,
         "scenario": scenario_id,
-        "live_probe": bool(probe_path),
-        "ingest_mode": ingest_mode,
-        "ingest_status": ingest_status,
+        "live_probe": True,
+        "alarm_name": alarm_name,
+        "probe": call,
+        "http_status": http_status,
+        "ingest_mode": "eventbridge",
+        "ingest_status": "waiting_for_alarm",
         "failed_calls": failed_calls,
-        "incident_id": inc_id,
-        "summary": new_inc["summary"],
+        "incident_id": "",
+        "summary": "",
         "message": message,
-        "incident": new_inc,
+        "incident": None,
     }
 
 

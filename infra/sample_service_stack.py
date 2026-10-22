@@ -32,6 +32,10 @@ ERROR_ALARMS = {
     "orders": "OpsPilotSampleServiceErrors",
     "checkout": f"{ALARM_PREFIX}-CheckoutErrors",
     "inventory": f"{ALARM_PREFIX}-InventoryDbTimeouts",
+    "basket": f"{ALARM_PREFIX}-BasketErrors",
+    "settings": f"{ALARM_PREFIX}-ConfigErrors",
+    "payments": f"{ALARM_PREFIX}-PaymentTimeouts",
+    "writes": f"{ALARM_PREFIX}-WriteThrottles",
 }
 LATENCY_ALARM = f"{ALARM_PREFIX}-LatencyP95"
 CRASH_ALARM = f"{ALARM_PREFIX}-Crashes"

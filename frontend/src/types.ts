@@ -220,8 +220,9 @@ export interface Scenario {
   description: string;
   classification: Classification;
   severity: 'sev1' | 'sev2' | 'sev3' | 'sev4';
-  /** true when the scenario sends real requests to sample_service */
+  /** true when the scenario sends a request to the deployed sample service */
   live_probe: boolean;
+  alarm_name?: string;
   expected_outcome: IncidentStatus;
 }
 
@@ -257,11 +258,14 @@ export interface TriggerResponse {
   simulated: boolean;
   scenario?: string;
   live_probe?: boolean;
-  ingest_mode: 'live' | 'offline';
+  alarm_name?: string;
+  probe?: string;
+  http_status?: number | null;
+  ingest_mode: 'live' | 'offline' | 'eventbridge';
   ingest_status: string;
   failed_calls: number;
-  incident_id: string;
-  summary: string;
+  incident_id?: string;
+  summary?: string;
   message: string;
-  incident: Incident;
+  incident?: Incident | null;
 }

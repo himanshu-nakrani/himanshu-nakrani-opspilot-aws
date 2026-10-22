@@ -243,12 +243,29 @@ def test_raise_pr_attaches_a_running_test_and_later_the_result(monkeypatch):
         def post_pull_request_comment(self, pr_id, content):
             comments.append(content)
 
-    monkeypatch.setattr(app_mod, "handle_alarm_event", lambda _event: {"status": "started", "incident_id": "inc-live-verify"})
     monkeypatch.setattr(app_mod, "propose_fix", fake_propose)
     monkeypatch.setattr(app_mod, "get_codebuild_client", lambda: cb)
     monkeypatch.setattr(app_mod, "get_scm_client", lambda: Scm())
     with TestClient(dashboard_app) as client:
-        inc = client.post("/api/trigger", json={"scenario": "null_order"}).json()["incident"]
+        app_mod.LOCAL_INCIDENTS_CACHE.insert(0, {
+            "incident_id": "inc-live-verify",
+            "service": "sample-service",
+            "alarm_name": "OpsPilotSampleServiceErrors",
+            "detected_at": "2026-10-23T00:00:00+00:00",
+            "status": "AWAITING_CHOICE",
+            "classification": "code_defect",
+            "confidence": 0.94,
+            "severity": "sev2",
+            "summary": "AttributeError on missing order ID",
+            "suspected_location": {"file": "sample_service/app.py", "line": 36, "function": "get_order"},
+            "evidence": [{"kind": "stack_frame", "ref": "sample_service/app.py:36", "claim": "order.total"}],
+            "suggested_fix_strategy": "Return 404 when the order is missing.",
+            "patch_diff": None,
+            "pr_url": None,
+            "ticket_key": "OPS-1",
+            "source": "fixture",
+        })
+        inc = client.get("/api/incidents/inc-live-verify").json()
         raised = client.post(f"/api/incidents/{inc['incident_id']}/fix-choice", json={"action": "raise_pr"})
         assert raised.status_code == 200, raised.text
         body = raised.json()
