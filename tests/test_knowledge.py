@@ -194,6 +194,64 @@ def test_retrieve_returns_passages_and_stays_empty_without_a_knowledge_base():
     assert empty["error"] == "Knowledge base is not configured."
 
 
+def test_seed_randomizes_documents_from_the_central_corpus():
+    import random
+
+    from opspilot.knowledge.seed import CORPUS_PATH, documents_from_corpus, load_corpus
+
+    corpus = load_corpus()
+    assert CORPUS_PATH.name == "corpus.json"
+    assert len(corpus["entries"]) >= 40
+    first = documents_from_corpus(random.Random(1), corpus)
+    again = documents_from_corpus(random.Random(1), corpus)
+    other = documents_from_corpus(random.Random(2), corpus)
+    assert [doc["body"] for doc in first] == [doc["body"] for doc in again]
+    assert [doc["body"] for doc in first] != [doc["body"] for doc in other]
+    assert len(first) == len(corpus["entries"]) * int(corpus["copies"])
+    assert {doc["key"] for doc in first} == {doc["key"] for doc in other}
+    stored = "\n".join(doc["body"] for doc in first)
+    assert "AttributeError" in stored
+    assert "connection pool" in stored
+    assert "Runtime.OutOfMemory" in stored
+    assert "code_defect" in stored and "insufficient_evidence" in stored
+
+
+def test_seed_uploads_dummy_runbooks_and_syncs_the_one_knowledge_base():
+    import random
+
+    from opspilot.knowledge.seed import documents_from_corpus, seed_knowledge_base
+
+    expected = documents_from_corpus(random.Random(7))
+    s3, agent = _S3(), _Agent()
+    result = seed_knowledge_base(
+        s3_client=s3,
+        agent_client=agent,
+        bucket="kb-bucket",
+        knowledge_base_id="kb-1",
+        rng=random.Random(7),
+    )
+    assert [item["Key"] for item in s3.puts] == [doc["key"] for doc in expected]
+    assert [item["Body"] for item in s3.puts] == [doc["body"].encode() for doc in expected]
+    assert all(item["Bucket"] == "kb-bucket" and item["ServerSideEncryption"] == "AES256" for item in s3.puts)
+    assert agent.jobs == [{"knowledgeBaseId": "kb-1", "dataSourceId": "ds-1"}]
+    assert result["job_id"] == "job-1"
+    assert result["uploaded"] == [doc["key"] for doc in expected]
+
+
+def test_seed_uploads_without_sync_when_the_knowledge_base_is_not_configured():
+    import random
+
+    from opspilot.knowledge.seed import documents_from_corpus, seed_knowledge_base
+
+    s3, agent = _S3(), _Agent()
+    result = seed_knowledge_base(
+        s3_client=s3, agent_client=agent, bucket="kb-bucket", knowledge_base_id="", rng=random.Random(3)
+    )
+    assert len(s3.puts) == len(documents_from_corpus(random.Random(3)))
+    assert agent.jobs == []
+    assert result["job_id"] is None
+
+
 def test_managed_knowledge_base_uses_the_managed_s3_connector():
     from opspilot.knowledge.provision import managed_kb_configuration, s3_connector_configuration
 

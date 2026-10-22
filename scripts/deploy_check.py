@@ -8,6 +8,7 @@
     python scripts/deploy_check.py opscenter         # check OpsCenter (ticketing) is reachable with these IAM creds
     python scripts/deploy_check.py repo-status       # exit 0 if the CodeCommit repo already exists
     python scripts/deploy_check.py seed-repo         # push this checkout to CodeCommit main (boto3, IAM only)
+    python scripts/deploy_check.py seed-knowledge    # upload sample runbooks and sync the one knowledge base
     python scripts/deploy_check.py verify            # post-deploy smoke test
     python scripts/deploy_check.py outputs           # print every stack output
 """
@@ -356,10 +357,35 @@ def seed_repo():
     print(f"  {GREEN}PASS{RESET} {repo}: main at {head[:10]} ({len(files)} files)")
 
 
+def seed_knowledge():
+    """Put the sample runbooks in the knowledge bucket and sync the one knowledge base."""
+    from opspilot.knowledge.seed import seed_knowledge_base
+
+    bucket = os.environ.get("KNOWLEDGE_BUCKET", "").strip()
+    if not bucket:
+        bucket = stack_outputs(session().client("cloudformation")).get("KnowledgeBucketName", "")
+    if not bucket:
+        bad("KnowledgeBucketName is missing; deploy OpsPilotCoreStack first")
+        sys.exit(1)
+    knowledge_base_id = os.environ.get("KNOWLEDGE_BASE_ID", "").strip()
+    s = session()
+    result = seed_knowledge_base(
+        s3_client=s.client("s3"),
+        agent_client=s.client("bedrock-agent") if knowledge_base_id else None,
+        bucket=bucket,
+        knowledge_base_id=knowledge_base_id,
+    )
+    ok(f"uploaded {len(result['uploaded'])} sample runbooks to {bucket}")
+    if result["job_id"]:
+        ok(f"knowledge base ingestion {result['job_id']}")
+    else:
+        warn("KNOWLEDGE_BASE_ID is unset, so the runbooks are in S3 and were not synced")
+
+
 if __name__ == "__main__":
     cmds = {"whoami": whoami, "bootstrap-status": bootstrap_status, "bedrock": bedrock,
             "secrets": secrets, "verify": verify, "outputs": outputs,
-            "repo-status": repo_status, "seed-repo": seed_repo,
+            "repo-status": repo_status, "seed-repo": seed_repo, "seed-knowledge": seed_knowledge,
             "opscenter": opscenter}
     if len(sys.argv) != 2 or sys.argv[1] not in cmds:
         sys.exit(__doc__)

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # OpsPilot one-shot deploy: CoreStack + SampleServiceStack + PipelineStack.
 #
-#   bash scripts/deploy.sh                # = up: preflight -> bootstrap -> synth -> deploy -> seed -> secrets -> verify
+#   bash scripts/deploy.sh                # = up: preflight -> bootstrap -> synth -> deploy -> seed -> seed-knowledge -> secrets -> verify
 #   bash scripts/deploy.sh preflight      # tools, Python deps, AWS identity, config, Bedrock access
 #   bash scripts/deploy.sh synth          # build Lambda assets + CloudFormation into cdk.out (no AWS writes)
 #   bash scripts/deploy.sh diff           # what would change in the account
 #   bash scripts/deploy.sh seed           # push this checkout to the CodeCommit repo's main (RESEED=1 to re-push)
+#   bash scripts/deploy.sh seed-knowledge # upload sample runbooks and sync the one knowledge base
 #   bash scripts/deploy.sh secrets        # (re)write the optional Slack secret from env (ticketing needs none)
 #   bash scripts/deploy.sh verify         # post-deploy smoke test (stacks, Lambdas, wiring, alarms, live URL)
 #   bash scripts/deploy.sh outputs        # print stack outputs
@@ -92,6 +93,7 @@ deploy() {
 }
 
 seed()    { step "Seed CodeCommit repo $CODECOMMIT_REPO"; "$PY" scripts/deploy_check.py seed-repo; }
+seed_knowledge() { step "Seed knowledge base"; "$PY" scripts/deploy_check.py seed-knowledge; }
 secrets() { step "Third-party secrets"; "$PY" scripts/deploy_check.py secrets; }
 verify()  { step "Verify";            "$PY" scripts/deploy_check.py verify; }
 
@@ -165,19 +167,20 @@ apply_codecommit_repo_exists_default
 
 cmd="${1:-up}"
 case "$cmd" in
-  up)        preflight; bootstrap; synth; deploy; seed; secrets; verify; next_steps ;;
+  up)        preflight; bootstrap; synth; deploy; seed; seed_knowledge; secrets; verify; next_steps ;;
   preflight) preflight ;;
   bootstrap) resolve_env; bootstrap ;;
   synth)     if [[ "${OFFLINE:-0}" == 1 ]]; then export CDK_DEFAULT_ACCOUNT=123456789012 CDK_DEFAULT_REGION=us-east-1; else resolve_env; fi; synth ;;
   diff)      resolve_env; $CDK diff "${CDK_APP[@]}" --all ;;
   deploy)    resolve_env; deploy ;;
   seed)      resolve_env; seed ;;
+  seed-knowledge) resolve_env; seed_knowledge ;;
   secrets)   resolve_env; secrets ;;
   verify)    resolve_env; verify ;;
   outputs)   resolve_env; "$PY" scripts/deploy_check.py outputs ;;
   dashboard) dashboard ;;
   checkpoint1) checkpoint1 "${2:-ui}" ;;
   destroy)   destroy ;;
-  -h|--help|help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$cmd' (try: bash scripts/deploy.sh help)" ;;
 esac

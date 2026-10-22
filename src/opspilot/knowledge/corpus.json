@@ -1,0 +1,615 @@
+{
+  "copies": 2,
+  "random": {
+    "regions": ["us-east-1", "us-west-2", "eu-west-1"],
+    "hosts": [
+      "ip-10-0-4-18.ec2.internal",
+      "ip-10-1-8-42.ec2.internal",
+      "ip-10-2-2-7.ec2.internal",
+      "ip-10-4-16-9.ec2.internal"
+    ],
+    "shifts": ["weekday on-call", "overnight on-call", "weekend on-call"],
+    "notes": [
+      "The same first log line showed up on a second host within ten minutes.",
+      "The alarm returned to OK after the change and stayed quiet for the next hour.",
+      "A page last month started with this same error text.",
+      "No customer payload was copied into this note.",
+      "Only one route was affected. The health check stayed green.",
+      "The on-call note says the failure started just after the last deploy."
+    ]
+  },
+  "entries": [
+    {
+      "id": "missing-order",
+      "kind": "historical_solution",
+      "title": "Missing order returns 500",
+      "service": ["sample-service", "orders-api"],
+      "classification": "code_defect",
+      "trigger": ["GET /orders/999", "GET /orders/404", "GET /orders/missing"],
+      "happened": "An unknown order id looks up None and then reads order.total, which raises AttributeError.",
+      "detail": [
+        "Known order ids still return 200. Only ids missing from the map fail.",
+        "The traceback points at the order lookup, not at the database client."
+      ],
+      "fix": "Return HTTP 404 when the order is not in the map. A database timeout or an out-of-memory crash needs a different fix."
+    },
+    {
+      "id": "unknown-coupon",
+      "kind": "historical_solution",
+      "title": "Unknown coupon returns 500",
+      "service": ["sample-service", "checkout-api"],
+      "classification": "code_defect",
+      "trigger": ["GET /checkout?sku=SKU-1&coupon=SPRING50", "GET /checkout?sku=SKU-9&coupon=SAVE10"],
+      "happened": "Checkout indexes the coupon table with a code that is not there, so it raises KeyError.",
+      "detail": [
+        "SPRING50 is the code used in the demo. Any unknown code fails the same way.",
+        "A known coupon still discounts the total and returns 200."
+      ],
+      "fix": "Reject an unknown coupon with HTTP 400. This is a code change. A payment-provider outage is a dependency."
+    },
+    {
+      "id": "null-sku",
+      "kind": "historical_solution",
+      "title": "Checkout with an empty sku",
+      "service": ["sample-service", "checkout-api"],
+      "classification": "code_defect",
+      "trigger": ["GET /checkout?sku=&coupon=NONE", "GET /checkout?coupon=NONE"],
+      "happened": "An empty sku is passed into the catalog lookup and the handler raises TypeError while formatting the line item.",
+      "detail": [
+        "The request has no sku query parameter.",
+        "The catalog itself is healthy for SKU-1."
+      ],
+      "fix": "Return HTTP 400 when sku is missing. Do not treat this as a catalog outage."
+    },
+    {
+      "id": "orders-page-skips-last",
+      "kind": "historical_solution",
+      "title": "Order list drops the last page",
+      "service": ["sample-service", "orders-api"],
+      "classification": "code_defect",
+      "trigger": ["GET /orders?page=3", "GET /orders?page=last"],
+      "happened": "The page loop uses range(len(orders)) and stops one short, so the last order is never returned.",
+      "detail": [
+        "Page 1 looks fine when the account has one order.",
+        "The missing row is always the final order id in the map."
+      ],
+      "fix": "Include the last index in the page slice. This is an off-by-one in this repo, not a dropped database row."
+    },
+    {
+      "id": "payment-status-mapped-wrong",
+      "kind": "historical_solution",
+      "title": "Paid orders reported as failed",
+      "service": ["sample-service", "payments-api"],
+      "classification": "code_defect",
+      "trigger": ["GET /payments/77/status", "GET /payments/12/status"],
+      "happened": "A captured payment is mapped to status failed because the handler compares the provider string with the wrong constant.",
+      "detail": [
+        "The provider returned captured. The handler stored failed.",
+        "No exception is thrown. The bug is the status value."
+      ],
+      "fix": "Map the captured provider status to paid. Latency on the legacy provider is a separate dependency issue."
+    },
+    {
+      "id": "retry-ignores-idempotency",
+      "kind": "historical_solution",
+      "title": "Checkout retry charges twice",
+      "service": ["sample-service", "checkout-api"],
+      "classification": "code_defect",
+      "trigger": ["POST /checkout", "POST /checkout retry"],
+      "happened": "A retried checkout ignores the idempotency key and creates a second payment.",
+      "detail": [
+        "The client sent the same key twice after a timeout.",
+        "Both calls returned 201 with different payment ids."
+      ],
+      "fix": "Store the idempotency key and return the first payment on a retry. This is a code defect in checkout."
+    },
+    {
+      "id": "stale-price-cache",
+      "kind": "historical_solution",
+      "title": "Catalog serves yesterday's price",
+      "service": ["sample-service", "catalog-api"],
+      "classification": "code_defect",
+      "trigger": ["GET /catalog/SKU-1", "GET /catalog/SKU-2"],
+      "happened": "The price cache never expires, so a price update in the table is invisible until the process restarts.",
+      "detail": [
+        "The table has the new price. The response still has the old one.",
+        "A fresh process returns the new price immediately."
+      ],
+      "fix": "Set a short TTL on the price cache, or drop the cache for this lookup. The table write itself succeeded."
+    },
+    {
+      "id": "report-day-boundary",
+      "kind": "historical_solution",
+      "title": "Daily report misses the last hour",
+      "service": ["sample-service", "reports-api"],
+      "classification": "code_defect",
+      "trigger": ["GET /reports/daily", "GET /reports/export?days=1"],
+      "happened": "The report window is computed in UTC and then compared with local timestamps, so the last hour of the day is omitted.",
+      "detail": [
+        "Rows exist in the log for that hour.",
+        "The export for days=90 can also run out of memory. That is a separate resource incident."
+      ],
+      "fix": "Compare both ends of the window in one timezone. Do not raise the Lambda memory for a missing hour."
+    },
+    {
+      "id": "missing-orders-table",
+      "kind": "historical_solution",
+      "title": "ORDERS_TABLE missing after deploy",
+      "service": ["sample-service", "orders-api"],
+      "classification": "config_regression",
+      "trigger": ["startup", "GET /orders/1"],
+      "happened": "A deploy removed the ORDERS_TABLE environment variable. Every request fails at startup with KeyError.",
+      "detail": [
+        "The previous version still had ORDERS_TABLE set.",
+        "The table itself is still in DynamoDB."
+      ],
+      "fix": "Put ORDERS_TABLE back in the Lambda environment and redeploy. There is no application patch."
+    },
+    {
+      "id": "payments-url-staging",
+      "kind": "historical_solution",
+      "title": "Payments URL points at staging",
+      "service": ["sample-service", "payments-api"],
+      "classification": "config_regression",
+      "trigger": ["GET /payments/77/status?provider=legacy", "POST /checkout"],
+      "happened": "PAYMENTS_URL was set to the staging host during a production deploy. Charges hit the wrong account.",
+      "detail": [
+        "The application code is the same as the last good release.",
+        "The staging host answers 200, so this does not look like a timeout."
+      ],
+      "fix": "Point PAYMENTS_URL back at the production host and redeploy the configuration."
+    },
+    {
+      "id": "timeout-set-too-low",
+      "kind": "historical_solution",
+      "title": "Database timeout set too low",
+      "service": ["sample-service", "inventory-api"],
+      "classification": "config_regression",
+      "trigger": ["GET /inventory/SKU-1", "GET /inventory/BULK-42"],
+      "happened": "DB_TIMEOUT_S was changed from 2 to 0.05. Healthy queries now raise TimeoutError.",
+      "detail": [
+        "inventory-db metrics show queries finishing in under a second.",
+        "The previous environment value was 2 seconds."
+      ],
+      "fix": "Restore DB_TIMEOUT_S. A real inventory-db hang is a dependency, and this setting is not that."
+    },
+    {
+      "id": "checkout-flag-without-table",
+      "kind": "historical_solution",
+      "title": "Checkout flag enabled without its table",
+      "service": ["sample-service", "checkout-api"],
+      "classification": "config_regression",
+      "trigger": ["POST /checkout", "GET /checkout?sku=SKU-1"],
+      "happened": "CHECKOUT_V2 was turned on, but the v2 table name was left blank. Checkout raises KeyError on the missing setting.",
+      "detail": [
+        "CHECKOUT_V2=false still uses the old path and succeeds.",
+        "No coupon code is involved in this failure."
+      ],
+      "fix": "Set the v2 table name, or turn CHECKOUT_V2 off, then redeploy. Do not patch the coupon lookup for this."
+    },
+    {
+      "id": "wrong-log-group",
+      "kind": "historical_solution",
+      "title": "Service logs shipped to the wrong group",
+      "service": ["sample-service", "orders-api"],
+      "classification": "config_regression",
+      "trigger": ["alarm OpsPilotSampleServiceErrors", "startup"],
+      "happened": "LOG_GROUP was changed to a group from another stack. The alarm sees errors, and this service's log group stays empty.",
+      "detail": [
+        "The other log group contains this service's request lines.",
+        "The function is still running."
+      ],
+      "fix": "Point LOG_GROUP back at this service and redeploy. Empty logs alone are not enough to call the incident a code defect."
+    },
+    {
+      "id": "debug-logging-in-prod",
+      "kind": "historical_solution",
+      "title": "Debug logging left on after deploy",
+      "service": ["sample-service", "storefront"],
+      "classification": "config_regression",
+      "trigger": ["startup", "GET /orders/1"],
+      "happened": "LOG_LEVEL was set to DEBUG in production. Each request writes the full payload and the disk fills.",
+      "detail": [
+        "The error rate is still low. The disk metric is what pages.",
+        "The last deploy is the change that set DEBUG."
+      ],
+      "fix": "Set LOG_LEVEL back to INFO and redeploy. Then clear the debug files. This is configuration, not an application patch."
+    },
+    {
+      "id": "inventory-db-timeout",
+      "kind": "historical_solution",
+      "title": "Inventory database timeout",
+      "service": ["sample-service", "inventory-api"],
+      "classification": "dependency",
+      "trigger": ["GET /inventory/BULK-42", "GET /inventory/BULK-7"],
+      "happened": "The inventory lookup waits on inventory-db and raises TimeoutError. The storefront code is waiting, not crashing on a bad line.",
+      "detail": [
+        "BULK-42 is the demo sku. Other bulk skus can wait the same way.",
+        "The handler does not catch the timeout, so the request becomes a 500."
+      ],
+      "fix": "A person checks inventory-db. OpsPilot does not open a pull request for this."
+    },
+    {
+      "id": "payments-legacy-latency",
+      "kind": "historical_solution",
+      "title": "Legacy payment provider is slow",
+      "service": ["sample-service", "payments-api"],
+      "classification": "dependency",
+      "trigger": ["GET /payments/77/status?provider=legacy", "GET /payments/18/status?provider=legacy"],
+      "happened": "The legacy payment provider takes about 6 seconds and the latency alarm fires. The handler is waiting on the provider.",
+      "detail": [
+        "provider=legacy is the slow path. The current provider returns quickly.",
+        "There is no traceback. The request eventually returns."
+      ],
+      "fix": "Page the payment provider owner. Do not change the order lookup because checkout latency rose."
+    },
+    {
+      "id": "inventory-dns-failure",
+      "kind": "historical_solution",
+      "title": "Inventory host does not resolve",
+      "service": ["sample-service", "inventory-api"],
+      "classification": "dependency",
+      "trigger": ["GET /inventory/SKU-1", "GET /inventory/BULK-42"],
+      "happened": "DNS for inventory-db fails with Temporary failure in name resolution. The application never reaches the query.",
+      "detail": [
+        "The database process is up in its own account.",
+        "Every inventory request fails together."
+      ],
+      "fix": "Restore the inventory-db name. There is no code change in the storefront."
+    },
+    {
+      "id": "payments-tls-expired",
+      "kind": "historical_solution",
+      "title": "Payment provider certificate expired",
+      "service": ["sample-service", "payments-api"],
+      "classification": "dependency",
+      "trigger": ["POST /checkout", "GET /payments/77/status"],
+      "happened": "The TLS handshake to the payment provider fails because the remote certificate expired.",
+      "detail": [
+        "The error is certificate verify failed.",
+        "Calls to inventory and orders still succeed."
+      ],
+      "fix": "The provider rotates the certificate. The storefront trust store does not need a code patch for an expired remote cert."
+    },
+    {
+      "id": "notify-queue-backlog",
+      "kind": "historical_solution",
+      "title": "Notification queue stopped draining",
+      "service": ["sample-service", "notify-worker"],
+      "classification": "dependency",
+      "trigger": ["queue notify-events", "alarm oldest message age"],
+      "happened": "The notify queue age climbs because the downstream mail API returns 503. The worker is retrying, not crashing.",
+      "detail": [
+        "Orders and checkout still return success.",
+        "Messages become visible again after each failed send."
+      ],
+      "fix": "Wait for the mail API, or pause the worker. Do not patch the storefront for a downstream 503."
+    },
+    {
+      "id": "catalog-429",
+      "kind": "historical_solution",
+      "title": "Catalog throttles the storefront",
+      "service": ["sample-service", "catalog-api"],
+      "classification": "dependency",
+      "trigger": ["GET /catalog/SKU-1", "GET /checkout?sku=SKU-1"],
+      "happened": "The catalog service returns HTTP 429. Checkout fails while waiting on a price it cannot fetch.",
+      "detail": [
+        "The 429 body says the catalog quota is exhausted.",
+        "A single sku in a quiet period succeeds."
+      ],
+      "fix": "Raise the catalog quota or slow the caller. The checkout code did not start returning 429 by itself."
+    },
+    {
+      "id": "report-export-oom",
+      "kind": "historical_solution",
+      "title": "Report export runs out of memory",
+      "service": ["sample-service", "reports-api"],
+      "classification": "resource",
+      "trigger": ["GET /reports/export?days=90", "GET /reports/export?days=30"],
+      "happened": "The export buffers the whole period in memory and the Lambda exits with Runtime.OutOfMemory.",
+      "detail": [
+        "days=1 still fits. days=90 is the demo that crashes.",
+        "The crash is a platform out-of-memory, not an exception from a bad dict lookup."
+      ],
+      "fix": "Stream the export or raise the memory size. This is resource exhaustion, not a logic bug in another route."
+    },
+    {
+      "id": "connection-pool",
+      "kind": "historical_solution",
+      "title": "Database connection pool exhausted",
+      "service": ["sample-service", "orders-api"],
+      "classification": "resource",
+      "trigger": ["GET /orders/1", "GET /inventory/SKU-1"],
+      "happened": "Logs say the connection pool is exhausted or QueuePool limit reached. New requests time out waiting for a connection.",
+      "detail": [
+        "The database is accepting connections from other services.",
+        "Restarting the process clears the page until the pool fills again."
+      ],
+      "fix": "Find the connection leak, or raise the pool size as a stopgap. A full disk or a pool limit is not a code defect unless a stack frame shows a leak in this repo."
+    },
+    {
+      "id": "disk-full",
+      "kind": "historical_solution",
+      "title": "Host disk is full",
+      "service": ["sample-service", "storefront"],
+      "classification": "resource",
+      "trigger": ["alarm disk used percent", "GET /orders/1"],
+      "happened": "The host disk is full. Writes fail with No space left on device, including log writes.",
+      "detail": [
+        "The largest growth is the application log directory.",
+        "CPU and memory still have headroom."
+      ],
+      "fix": "Free disk or grow the volume, and cap the logs. Do not open a pull request unless a stack frame shows this repo writing unbounded files."
+    },
+    {
+      "id": "cpu-saturation",
+      "kind": "historical_solution",
+      "title": "Checkout CPU is saturated",
+      "service": ["sample-service", "checkout-api"],
+      "classification": "resource",
+      "trigger": ["alarm CPUUtilization", "GET /checkout?sku=SKU-1"],
+      "happened": "CPU stays near 100 percent and checkout latency rises. The process is busy, and there is no new exception.",
+      "detail": [
+        "A traffic spike started at the same minute as the alarm.",
+        "Error logs are quiet."
+      ],
+      "fix": "Add capacity or shed load. High CPU without an error line is not enough to propose a code change."
+    },
+    {
+      "id": "lambda-concurrency",
+      "kind": "historical_solution",
+      "title": "Lambda concurrency quota reached",
+      "service": ["sample-service", "reports-api"],
+      "classification": "resource",
+      "trigger": ["GET /reports/export?days=1", "reserved concurrency"],
+      "happened": "Invocations fail with TooManyRequestsException because the reserved concurrency quota is exhausted.",
+      "detail": [
+        "The function that does run finishes normally.",
+        "The quota was lowered in the account, not in the handler."
+      ],
+      "fix": "Raise the concurrency quota or slow the caller. There is no handler patch."
+    },
+    {
+      "id": "dynamodb-throttle",
+      "kind": "historical_solution",
+      "title": "Orders table is throttled",
+      "service": ["sample-service", "orders-api"],
+      "classification": "resource",
+      "trigger": ["GET /orders/1", "PUT /orders"],
+      "happened": "DynamoDB returns ProvisionedThroughputExceededException on the orders table. The handler is retrying the same read.",
+      "detail": [
+        "Consumed capacity is flat against the provisioned limit.",
+        "The item key in the request is valid."
+      ],
+      "fix": "Raise the table capacity or switch the table to on-demand. A missing item is a different incident and returns a not-found result."
+    },
+    {
+      "id": "ephemeral-storage-full",
+      "kind": "historical_solution",
+      "title": "Lambda ephemeral storage is full",
+      "service": ["sample-service", "reports-api"],
+      "classification": "resource",
+      "trigger": ["GET /reports/export?days=7", "write /tmp/export.csv"],
+      "happened": "The export writes the whole file under /tmp and the Lambda ephemeral storage fills.",
+      "detail": [
+        "The error text is No space left on device under /tmp.",
+        "Memory still has room, so this is not Runtime.OutOfMemory."
+      ],
+      "fix": "Stream the file out, or raise ephemeral storage. Do not change the order handler."
+    },
+    {
+      "id": "alarm-without-stack",
+      "kind": "historical_solution",
+      "title": "Alarm fired with no stack",
+      "service": ["sample-service", "storefront"],
+      "classification": "insufficient_evidence",
+      "trigger": ["alarm OpsPilotSampleServiceErrors", "alarm latency"],
+      "happened": "The error alarm fired, and the log window has no traceback and no error line from this service.",
+      "detail": [
+        "The metric moved. The log filter found nothing.",
+        "A retry of the same minute also has an empty window."
+      ],
+      "fix": "Leave the incident for a person. Do not invent a code change or a pull request without a stack frame or an error line."
+    },
+    {
+      "id": "latency-no-error-line",
+      "kind": "historical_solution",
+      "title": "Latency rose without an error line",
+      "service": ["sample-service", "checkout-api"],
+      "classification": "insufficient_evidence",
+      "trigger": ["alarm LatencyP95", "GET /checkout?sku=SKU-1"],
+      "happened": "p95 latency crossed the alarm threshold. Request logs show 200 responses and no exception text.",
+      "detail": [
+        "No downstream timeout is named in the logs.",
+        "CPU and memory alarms are quiet."
+      ],
+      "fix": "Collect a longer window or a trace before classifying this as a code defect. A metric by itself is not grounding."
+    },
+    {
+      "id": "one-sided-trace",
+      "kind": "historical_solution",
+      "title": "Trace stops before the handler",
+      "service": ["sample-service", "orders-api"],
+      "classification": "insufficient_evidence",
+      "trigger": ["GET /orders/1", "missing span"],
+      "happened": "The trace shows the load balancer and then stops. There is no application span and no log line.",
+      "detail": [
+        "The target health check is failing open.",
+        "No commit in the window touches the order handler."
+      ],
+      "fix": "Ask for the application logs. Do not propose a patch from a trace that never entered the service."
+    },
+    {
+      "id": "classification-guide",
+      "kind": "documentation",
+      "title": "How OpsPilot classifies an incident",
+      "service": ["sample-service", "opspilot"],
+      "classification": "reference",
+      "trigger": ["alarm", "incident open"],
+      "happened": "Every incident gets one classification: code_defect, config_regression, dependency, resource, or insufficient_evidence.",
+      "detail": [
+        "code_defect is a wrong line in this repo, backed by a stack frame.",
+        "config_regression is a bad setting or a bad deploy of configuration.",
+        "dependency is a downstream system this service waits on.",
+        "resource is disk, memory, CPU, connections, or a quota.",
+        "insufficient_evidence means the logs do not support a cause yet."
+      ],
+      "fix": "Only a code_defect with a stack frame at a real file and line is a candidate for a pull request. The other four classifications notify a person."
+    },
+    {
+      "id": "evidence-rules",
+      "kind": "documentation",
+      "title": "What counts as evidence",
+      "service": ["sample-service", "opspilot"],
+      "classification": "reference",
+      "trigger": ["RCA", "retrieve_knowledge"],
+      "happened": "Evidence kinds are log_line, stack_frame, commit, and metric. A metric can color the story and cannot ground a code change by itself.",
+      "detail": [
+        "A retrieved knowledge passage is background. It is not an evidence item.",
+        "A stack frame has to match a file and line that exist in the repo."
+      ],
+      "fix": "Cite a log line, a stack frame, or a commit when proposing a cause. Do not cite a knowledge-base passage as proof."
+    },
+    {
+      "id": "when-a-pull-request-is-wrong",
+      "kind": "documentation",
+      "title": "When not to open a pull request",
+      "service": ["sample-service", "opspilot"],
+      "classification": "reference",
+      "trigger": ["route", "propose fix"],
+      "happened": "Disk full, connection pool exhaustion, a downstream timeout, a missing environment variable, and an alarm with no error line all look urgent and none of them is automatically a code change.",
+      "detail": [
+        "config_regression is fixed by restoring the setting.",
+        "dependency and resource incidents page a person.",
+        "insufficient_evidence waits for more logs."
+      ],
+      "fix": "Open a pull request only for a code_defect whose suspected location is backed by a matching stack frame."
+    },
+    {
+      "id": "incident-flow",
+      "kind": "documentation",
+      "title": "Path from alarm to ticket",
+      "service": ["sample-service", "opspilot"],
+      "classification": "reference",
+      "trigger": ["CloudWatch alarm", "EventBridge"],
+      "happened": "A CloudWatch alarm reaches EventBridge, ingest deduplicates it, CollectContext reads the log window, and the RCA step classifies the incident.",
+      "detail": [
+        "Dedup holds a repeat of the same alarm for about 15 minutes.",
+        "The alarm must return to OK before it can page again."
+      ],
+      "fix": "After classification, a code defect can become a pull request. Every other class becomes an OpsCenter OpsItem and a notification."
+    },
+    {
+      "id": "redact-before-save",
+      "kind": "documentation",
+      "title": "Redact secrets before saving knowledge",
+      "service": ["sample-service", "opspilot"],
+      "classification": "reference",
+      "trigger": ["knowledge ingest", "merged pull request"],
+      "happened": "Incident notes can contain emails, tokens, and account identifiers. Those values are removed before a document is shown or stored.",
+      "detail": [
+        "The preview on the incident page and the uploaded object use the same redacted text.",
+        "A merged pull request is what starts a solution ingest."
+      ],
+      "fix": "Keep secrets out of the knowledge base. Store the redacted markdown only."
+    },
+    {
+      "id": "orders-999-log",
+      "kind": "log",
+      "title": "Log note for an unknown order",
+      "service": ["sample-service", "orders-api"],
+      "classification": "code_defect",
+      "trigger": ["GET /orders/999", "GET /orders/0"],
+      "happened": "Log line: unhandled_exception AttributeError: 'NoneType' object has no attribute 'total' while reading the order map.",
+      "detail": [
+        "The line also includes the route /orders/999.",
+        "No TimeoutError appears in this window."
+      ],
+      "fix": "The matching historical fix is to return 404 for a missing order."
+    },
+    {
+      "id": "checkout-coupon-log",
+      "kind": "log",
+      "title": "Log note for an unknown coupon",
+      "service": ["sample-service", "checkout-api"],
+      "classification": "code_defect",
+      "trigger": ["GET /checkout?sku=SKU-1&coupon=SPRING50", "GET /checkout?sku=SKU-2&coupon=SAVE10"],
+      "happened": "Log line: KeyError: 'SPRING50' in the coupon table during checkout.",
+      "detail": [
+        "The sku in the same request is valid.",
+        "The payment provider was not called."
+      ],
+      "fix": "The matching historical fix is HTTP 400 for an unknown coupon."
+    },
+    {
+      "id": "inventory-timeout-log",
+      "kind": "log",
+      "title": "Log note for an inventory timeout",
+      "service": ["sample-service", "inventory-api"],
+      "classification": "dependency",
+      "trigger": ["GET /inventory/BULK-42", "GET /inventory/BULK-7"],
+      "happened": "Log line: TimeoutError: timed out waiting for inventory-db.",
+      "detail": [
+        "The line names inventory-db.",
+        "There is no AttributeError in this window."
+      ],
+      "fix": "The matching historical fix is to check inventory-db. Do not patch the order map."
+    },
+    {
+      "id": "report-oom-log",
+      "kind": "log",
+      "title": "Log note for a report export crash",
+      "service": ["sample-service", "reports-api"],
+      "classification": "resource",
+      "trigger": ["GET /reports/export?days=90", "GET /reports/export?days=30"],
+      "happened": "Platform log: Runtime.OutOfMemory during the report export. The process ends before a Python traceback is flushed.",
+      "detail": [
+        "The request query includes days=90.",
+        "A shorter export in the same hour succeeded."
+      ],
+      "fix": "The matching historical fix is to stream the export or raise memory."
+    },
+    {
+      "id": "pool-timeout-log",
+      "kind": "log",
+      "title": "Log note for a full connection pool",
+      "service": ["sample-service", "orders-api"],
+      "classification": "resource",
+      "trigger": ["GET /orders/1", "GET /inventory/SKU-1"],
+      "happened": "Log line: sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 10 reached, connection timed out.",
+      "detail": [
+        "The phrase connection pool appears in the same line.",
+        "The database error is a wait, not a syntax error."
+      ],
+      "fix": "The matching historical fix is to find the leak or raise the pool size."
+    },
+    {
+      "id": "disk-full-log",
+      "kind": "log",
+      "title": "Log note for a full disk",
+      "service": ["sample-service", "storefront"],
+      "classification": "resource",
+      "trigger": ["write /var/log/app.log", "GET /orders/1"],
+      "happened": "Log line: OSError: [Errno 28] No space left on device.",
+      "detail": [
+        "The path is the application log file.",
+        "df reports the volume at 100 percent."
+      ],
+      "fix": "The matching historical fix is to free disk. This log line is not a stack frame in application logic."
+    },
+    {
+      "id": "missing-env-log",
+      "kind": "log",
+      "title": "Log note for a missing table setting",
+      "service": ["sample-service", "orders-api"],
+      "classification": "config_regression",
+      "trigger": ["startup", "GET /orders/1"],
+      "happened": "Log line: KeyError: 'ORDERS_TABLE' while reading the environment at startup.",
+      "detail": [
+        "The line is emitted before the first request handler runs.",
+        "The orders table still exists."
+      ],
+      "fix": "The matching historical fix is to restore the ORDERS_TABLE environment variable."
+    }
+  ]
+}
