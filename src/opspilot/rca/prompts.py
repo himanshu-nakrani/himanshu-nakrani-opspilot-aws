@@ -19,9 +19,9 @@ Classifications (pick exactly one):
 
 Evidence rules (results that break them are discarded automatically):
 1. log_line refs must be exact log line ids shown to you (for example log-3).
-2. stack_frame refs must be an exact file:line from the parsed stack trace.
+2. stack_frame refs must be the file:line printed in the stack trace, the line that raised. Cite that frame even when the cause is a nearby line in the source.
 3. commit refs must be a SHA from the recent commits list.
-4. suspected_location must be a frame from the parsed stack trace.
+4. suspected_location must be that same stack-trace frame.
 5. Do not cite anything you have not seen. If unsure, choose insufficient_evidence.
 6. retrieve_knowledge returns past merged fixes and notes. Treat those passages as background. Do not cite them as evidence.
 

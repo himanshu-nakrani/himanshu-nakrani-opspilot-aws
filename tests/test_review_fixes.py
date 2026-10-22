@@ -65,6 +65,47 @@ def test_grounded_rca_passes_and_routes_to_fix():
     assert route_rca(rca) == "propose_fix"
 
 
+def test_nearby_cause_line_aligns_to_the_traceback_frame():
+    """The orders fault raises on line 36; models often cite the lookup a few lines above."""
+    bundle = _bundle(line=36)
+    cited = _rca(
+        confidence=0.9,
+        suspected_location={"file": "sample_service/app.py", "line": 31, "function": "get_order"},
+        evidence=[{"kind": "stack_frame", "ref": "sample_service/app.py:31", "claim": "ORDERS.get returned None"}],
+    )
+    rca, issues = ground_rca(bundle, cited)
+    assert issues == []
+    assert rca.classification == "code_defect"
+    assert rca.evidence[0].ref == "sample_service/app.py:36"
+    assert rca.suspected_location.line == 36
+    assert route_rca(rca) == "propose_fix"
+
+
+def test_cause_line_without_location_still_sets_the_traceback_frame():
+    bundle = _bundle(line=36)
+    cited = _rca(
+        confidence=0.9,
+        suspected_location=None,
+        evidence=[{"kind": "stack_frame", "ref": "sample_service/app.py:31", "claim": "lookup returned None"}],
+    )
+    rca, issues = ground_rca(bundle, cited)
+    assert issues == []
+    assert rca.suspected_location.file == "sample_service/app.py"
+    assert rca.suspected_location.line == 36
+    assert route_rca(rca) == "propose_fix"
+
+
+def test_distant_line_in_the_same_file_still_abstains():
+    bundle = _bundle(line=36)
+    cited = _rca(
+        suspected_location={"file": "sample_service/app.py", "line": 1, "function": "health"},
+        evidence=[{"kind": "stack_frame", "ref": "sample_service/app.py:1", "claim": "wrong function"}],
+    )
+    rca, issues = ground_rca(bundle, cited)
+    assert rca.classification == "insufficient_evidence"
+    assert issues
+
+
 def test_model_cannot_override_incident_id():
     rca, _ = ground_rca(_bundle(), _rca(incident_id="someone-else"))
     assert rca.incident_id == "inc-r"

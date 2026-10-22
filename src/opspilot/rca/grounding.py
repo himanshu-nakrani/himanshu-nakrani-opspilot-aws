@@ -5,9 +5,11 @@ goes through `ground_rca` before it reaches the router. The rules:
 
 * log_line evidence must name an exact log line id from the context bundle.
 * stack_frame evidence must be an exact `file:line` that appears in the parsed stack trace.
+  A citation in the same file within 8 lines of that frame is aligned to the frame first,
+  so a cause line just above the raise still counts.
 * commit evidence must be a hex SHA (>= 7 chars) that prefixes a commit in `recent_commits`.
 * metric evidence cannot be checked against the bundle, so it never counts as grounding.
-* suspected_location must match a frame in the parsed stack trace.
+* suspected_location must match a frame in the parsed stack trace, after the same alignment.
 * code_defect needs a parsed stack trace AND at least one grounded stack_frame or commit item.
 * config_regression only needs exact refs, because it routes to notify (no revert agent yet).
 
@@ -24,12 +26,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 
-from opspilot.contracts import ContextBundle, EvidenceItem, RcaResult
+from opspilot.contracts import ContextBundle, EvidenceItem, RcaResult, SuspectedLocation
 
 logger = logging.getLogger(__name__)
 
 ABSTAIN_CONFIDENCE_CAP = 0.4
 FIX_CLASSES = ("code_defect", "config_regression")
+# How far a cited line may sit from the traceback frame in the same file.
+NEARBY_FRAME_LINES = 8
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
@@ -56,6 +60,66 @@ def _frame_refs(bundle: ContextBundle) -> set[str]:
     if not bundle.stack_trace:
         return set()
     return {f"{fr.file}:{fr.line}" for fr in bundle.stack_trace.frames}
+
+
+def _nearest_frame(bundle: ContextBundle, file: str, line: int):
+    """Closest traceback frame in ``file`` within NEARBY_FRAME_LINES, if any.
+
+    A later frame wins a distance tie, so the innermost frame is preferred.
+    """
+    if not bundle.stack_trace:
+        return None
+    best = None
+    best_dist = NEARBY_FRAME_LINES + 1
+    for frame in bundle.stack_trace.frames:
+        if frame.file != file:
+            continue
+        dist = abs(frame.line - line)
+        if dist <= best_dist and dist <= NEARBY_FRAME_LINES:
+            best = frame
+            best_dist = dist
+    return best
+
+
+def _split_frame_ref(ref: str) -> tuple[str, int] | None:
+    file, sep, line_s = ref.strip().rpartition(":")
+    if not sep or not line_s.isdigit() or not file:
+        return None
+    return file, int(line_s)
+
+
+def align_citations(bundle: ContextBundle, rca: RcaResult) -> RcaResult:
+    """Point nearby citations at the traceback frame they belong to.
+
+    Models often cite the line that produced a bad value (``order = ORDERS.get(...)``)
+    instead of the line that raised (``order.total``). Both describe the same frame.
+    A citation in another file, or more than NEARBY_FRAME_LINES away, is left alone
+    and still fails the exact-match check.
+    """
+    exact = _frame_refs(bundle)
+    evidence: List[EvidenceItem] = []
+    snapped = None
+    for item in rca.evidence:
+        if item.kind != "stack_frame" or item.ref.strip() in exact:
+            evidence.append(item)
+            continue
+        parsed = _split_frame_ref(item.ref)
+        frame = _nearest_frame(bundle, parsed[0], parsed[1]) if parsed else None
+        if frame is None:
+            evidence.append(item)
+            continue
+        snapped = frame
+        evidence.append(item.model_copy(update={"ref": f"{frame.file}:{frame.line}"}))
+
+    loc = rca.suspected_location
+    if loc is not None and f"{loc.file}:{loc.line}" not in exact:
+        frame = _nearest_frame(bundle, loc.file, loc.line)
+        if frame is not None:
+            loc = loc.model_copy(update={"line": frame.line, "function": loc.function or frame.function})
+    elif loc is None and snapped is not None and rca.classification == "code_defect":
+        loc = SuspectedLocation(file=snapped.file, line=snapped.line, function=snapped.function)
+
+    return rca.model_copy(update={"evidence": evidence, "suspected_location": loc})
 
 
 def check_evidence(bundle: ContextBundle, rca: RcaResult) -> Tuple[List[str], bool]:
@@ -109,6 +173,7 @@ def ground_rca(bundle: ContextBundle, raw: Dict[str, Any] | RcaResult) -> Tuple[
     if rca.incident_id != bundle.incident_id:
         rca = rca.model_copy(update={"incident_id": bundle.incident_id})
 
+    rca = align_citations(bundle, rca)
     issues, strong = check_evidence(bundle, rca)
 
     if rca.classification == "code_defect":
@@ -131,4 +196,4 @@ def ground_rca(bundle: ContextBundle, raw: Dict[str, Any] | RcaResult) -> Tuple[
     return rca, issues
 
 
-__all__ = ["abstain", "check_evidence", "ground_rca", "ValidationError", "ABSTAIN_CONFIDENCE_CAP"]
+__all__ = ["abstain", "align_citations", "check_evidence", "ground_rca", "ValidationError", "ABSTAIN_CONFIDENCE_CAP", "NEARBY_FRAME_LINES"]
