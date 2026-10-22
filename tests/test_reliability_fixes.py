@@ -149,6 +149,10 @@ def test_asl_route_waits_for_a_human_pr_choice():
     assert ASL["StartAt"] == "Entry"
     assert STATES["Entry"]["Default"] == "CollectContext"
     assert STATES["Entry"]["Choices"] == [
+        {"Variable": "$.action", "IsPresent": True, "Next": "HasAction"}
+    ]
+    assert STATES["HasAction"]["Default"] == "CollectContext"
+    assert STATES["HasAction"]["Choices"] == [
         {"Variable": "$.action", "StringEquals": "raise_pr", "Next": "ProposeFix"}
     ]
     assert STATES["Route"]["Default"] == "Notify"

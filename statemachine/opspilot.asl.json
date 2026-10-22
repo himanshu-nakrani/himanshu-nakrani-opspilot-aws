@@ -4,7 +4,19 @@
   "States": {
     "Entry": {
       "Type": "Choice",
-      "Comment": "An alarm execution has no action. It is analyzed and stops before any pull request. action raise_pr is the only way into ProposeFix, so a pull request is never opened by the alarm path.",
+      "Comment": "An alarm payload has no action field. IsPresent is the only check here, because comparing a missing path fails the execution. raise_pr is handled in HasAction.",
+      "Choices": [
+        {
+          "Variable": "$.action",
+          "IsPresent": true,
+          "Next": "HasAction"
+        }
+      ],
+      "Default": "CollectContext"
+    },
+    "HasAction": {
+      "Type": "Choice",
+      "Comment": "Reached only when action exists. raise_pr is the only way into ProposeFix, so an alarm run never opens a pull request.",
       "Choices": [
         {
           "Variable": "$.action",
