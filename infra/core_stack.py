@@ -7,6 +7,8 @@ from aws_cdk import (
     Stack,
     aws_codecommit as codecommit,
     aws_dynamodb as dynamodb,
+    aws_iam as iam,
+    aws_s3 as s3,
     aws_secretsmanager as secretsmanager,
     aws_sns as sns,
     RemovalPolicy,
@@ -96,6 +98,38 @@ class CoreStack(Stack):
             secret_name="opspilot/slack",
             description="OpsPilot Slack incoming webhook URL",
         )
+
+        # Documents the RCA agent can retrieve after a pull request is merged.
+        # Bedrock owns the vector index. This bucket is the managed connector's source.
+        self.knowledge_bucket = s3.Bucket(
+            self,
+            "KnowledgeBucket",
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            enforce_ssl=True,
+            removal_policy=RemovalPolicy.RETAIN,
+        )
+        self.knowledge_role = iam.Role(
+            self,
+            "KnowledgeBaseRole",
+            assumed_by=iam.ServicePrincipal(
+                "bedrock.amazonaws.com",
+                conditions={
+                    "StringEquals": {"aws:SourceAccount": self.account},
+                    "ArnLike": {
+                        "aws:SourceArn": self.format_arn(
+                            service="bedrock",
+                            resource="knowledge-base",
+                            resource_name="*",
+                        )
+                    },
+                },
+            ),
+            description="Lets Bedrock read OpsPilot solution documents for the managed knowledge base",
+        )
+        self.knowledge_bucket.grant_read(self.knowledge_role)
+        cdk.CfnOutput(self, "KnowledgeBucketName", value=self.knowledge_bucket.bucket_name)
+        cdk.CfnOutput(self, "KnowledgeBaseRoleArn", value=self.knowledge_role.role_arn)
 
         # SNS notification topic
         self.alerts_topic = sns.Topic(

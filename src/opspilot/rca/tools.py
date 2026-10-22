@@ -60,6 +60,21 @@ RCA_TOOL_CONFIG: Dict[str, Any] = {
     "tools": [
         {
             "toolSpec": {
+                "name": "retrieve_knowledge",
+                "description": "Search the knowledge base of merged fixes, notes, and documentation. Results are background and must not be cited as evidence.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "What to look up in past incidents and docs"},
+                        },
+                        "required": ["query"],
+                    }
+                },
+            }
+        },
+        {
+            "toolSpec": {
                 "name": "query_logs",
                 "description": "Query or filter recent application logs for specific search terms or error patterns",
                 "inputSchema": {

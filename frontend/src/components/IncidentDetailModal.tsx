@@ -78,6 +78,12 @@ export function testStatusLabel(status: string): string {
   return status;
 }
 
+export function knowledgeStatusLabel(status: string | null | undefined): string {
+  if (status === 'ingested') return 'Ingested';
+  if (status === 'failed') return 'Ingest failed';
+  return 'Waiting for merge';
+}
+
 export function deployStatusLabel(status: string): string {
   if (status === 'not_started') return 'Not started';
   if (status === 'in_progress') return 'In progress';
@@ -102,6 +108,7 @@ function mergePrReading(incident: Incident, body: PrStatus): Incident {
     next.deploy_error = body.deploy.error ?? null;
     next.deploy_stage = body.deploy.stage ?? null;
   }
+  if (body.knowledge) next.knowledge = body.knowledge;
   return next;
 }
 
@@ -468,6 +475,23 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
           )}
           {!prStatus && prPending && (
             <p role="status" className="mt-3 text-xs text-ink-300">Checking pull request status…</p>
+          )}
+          {incident.knowledge?.body && (
+            <div className="mt-4 rounded-lg border border-ink-700 bg-ink-950/40 p-3">
+              <h4 className={sectionTitle}>Knowledge base</h4>
+              <p className="text-xs text-ink-100">{knowledgeStatusLabel(incident.knowledge.status)}</p>
+              <p className="mt-1 text-xs text-ink-300">
+                {incident.knowledge.status === 'ingested'
+                  ? 'This document was stored for later incidents to retrieve.'
+                  : 'This document is stored after the pull request merges.'}
+              </p>
+              {incident.knowledge.error && (
+                <p role="alert" className="mt-2 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
+                  {incident.knowledge.error}
+                </p>
+              )}
+              <pre className="mt-2 max-h-64 overflow-auto text-xs font-mono text-ink-200 whitespace-pre-wrap">{incident.knowledge.body}</pre>
+            </div>
           )}
           {showTestPanel(incident) && (
             <div className="mt-4 rounded-lg border border-ink-700 bg-ink-950/40 p-3">

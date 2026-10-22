@@ -74,6 +74,16 @@ export interface Incident {
   source?: IncidentSource;
   /** set when the dashboard ran the RCA agent itself and kept its trace */
   agent_run_id?: string | null;
+  /** Text that will be stored in the knowledge base once the pull request merges. */
+  knowledge?: KnowledgeDocument | null;
+}
+
+/** Preview of the document Bedrock ingests after the pull request merges. */
+export interface KnowledgeDocument {
+  status: 'waiting' | 'ingested' | 'failed' | (string & {});
+  title?: string | null;
+  body: string;
+  error?: string | null;
 }
 
 /** GET /api/incidents/{id}/pr-status. status is a CodeCommit reading, or "opened" when that read failed. */
@@ -91,6 +101,7 @@ export interface PrStatus {
     log_excerpt?: string | null;
     error?: string | null;
   } | null;
+  knowledge?: KnowledgeDocument | null;
   deploy?: {
     status?: string | null;
     stage?: string | null;

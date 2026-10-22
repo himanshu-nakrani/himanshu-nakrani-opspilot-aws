@@ -78,6 +78,7 @@ class PipelineStack(Stack):
             "SNS_TOPIC_ARN": core_stack.alerts_topic.topic_arn,
             # Explicit live mode: real Bedrock/CodeCommit/OpsCenter, failures raise to Step Functions.
             "OPSPILOT_MODE": "live",
+            "KNOWLEDGE_BASE_ID": os.environ.get("KNOWLEDGE_BASE_ID", ""),
         }
 
         # Every Lambda shares one bundled asset: src/opspilot plus requirements-lambda.txt
@@ -126,6 +127,14 @@ class PipelineStack(Stack):
                 resources=self._bedrock_model_arns(bedrock_model_id),
             )
         )
+        knowledge_base_id = os.environ.get("KNOWLEDGE_BASE_ID", "")
+        if knowledge_base_id:
+            self.run_rca_fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["bedrock:Retrieve"],
+                    resources=[f"arn:{Aws.PARTITION}:bedrock:{Aws.REGION}:{Aws.ACCOUNT_ID}:knowledge-base/{knowledge_base_id}"],
+                )
+            )
 
         # 3. CreateTicket Function
         self.create_ticket_fn = lambda_.Function(

@@ -3,6 +3,7 @@ import type { Incident } from '../types';
 import {
   deployStatusLabel,
   fixChoiceActions,
+  knowledgeStatusLabel,
   prStatusLabel,
   prStatusNotice,
   pullRequestUrl,
@@ -65,6 +66,10 @@ describe('prStatusLabel', () => {
   it('labels known states and leaves any other status unchanged', () => {
     expect(prStatusLabel('open')).toBe('Open');
     expect(prStatusLabel('merged')).toBe('Merged');
+    expect(knowledgeStatusLabel('waiting')).toBe('Waiting for merge');
+    expect(knowledgeStatusLabel(undefined)).toBe('Waiting for merge');
+    expect(knowledgeStatusLabel('ingested')).toBe('Ingested');
+    expect(knowledgeStatusLabel('failed')).toBe('Ingest failed');
     expect(prStatusLabel('closed')).toBe('Closed');
     expect(prStatusLabel('opened')).toBe('Opened');
     expect(prStatusLabel('PENDING')).toBe('PENDING');

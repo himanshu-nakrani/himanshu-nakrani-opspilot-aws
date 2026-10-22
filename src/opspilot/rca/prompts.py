@@ -23,6 +23,7 @@ Evidence rules (results that break them are discarded automatically):
 3. commit refs must be a SHA from the recent commits list.
 4. suspected_location must be a frame from the parsed stack trace.
 5. Do not cite anything you have not seen. If unsure, choose insufficient_evidence.
+6. retrieve_knowledge returns past merged fixes and notes. Treat those passages as background. Do not cite them as evidence.
 
 Confidence: report how likely you are to be right, not how complete the report looks.
 Use <= 0.4 for insufficient_evidence.

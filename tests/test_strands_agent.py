@@ -45,7 +45,7 @@ def test_create_strands_rca_agent():
 
     assert isinstance(agent, Agent)
     assert agent.name == f"OpsPilot-RCA-{bundle.incident_id}"
-    assert len(agent.tool_names) == 4
+    assert len(agent.tool_names) == 5
     for tool_name in ["query_logs", "get_file", "get_commit_diff", "submit_rca"]:
         assert tool_name in agent.tool_names
 
@@ -56,7 +56,7 @@ def test_strands_tools_spec_generation():
     agent = create_strands_rca_agent(bundle)
 
     specs = agent.tool_registry.get_all_tool_specs()
-    assert len(specs) == 4
+    assert len(specs) == 5
     for spec in specs:
         assert "name" in spec
         assert "description" in spec

@@ -17,6 +17,7 @@ from strands import tool
 from opspilot.contracts import ContextBundle, RcaResult
 from opspilot.agentcore.memory import AgentCoreMemory
 from opspilot.agentcore.policy import AgentCorePolicy, PolicyViolationError
+from opspilot.knowledge.retrieve import retrieve_knowledge as search_knowledge
 from opspilot.rca.tools import (
     RCA_SCHEMA,
     execute_get_commit_diff,
@@ -37,6 +38,19 @@ class AgentCoreGateway:
 
     def _register_default_tools(self) -> None:
         """Register default tools for incident investigation and remediation."""
+        self.register_tool(
+            name="retrieve_knowledge",
+            description="Search the knowledge base of merged fixes, notes, and documentation. Results are background and must not be cited as evidence.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to look up in past incidents and docs"},
+                },
+                "required": ["query"],
+            },
+            handler=self._handle_retrieve_knowledge,
+        )
+
         self.register_tool(
             name="query_logs",
             description="Query or filter recent application logs for specific search terms or error patterns.",
@@ -119,6 +133,12 @@ class AgentCoreGateway:
         return specs
 
     # Handlers for core tools
+    def _handle_retrieve_knowledge(self, bundle: ContextBundle, args: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        return search_knowledge(
+            str(args.get("query", "")),
+            knowledge_base_id=os.environ.get("KNOWLEDGE_BASE_ID", ""),
+        )
+
     def _handle_query_logs(self, bundle: ContextBundle, args: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         pattern = args.get("pattern", "")
         limit = int(args.get("limit", 20))
@@ -216,6 +236,24 @@ class AgentCoreGateway:
         active_policy = policy or self.policy
 
         @tool
+        def retrieve_knowledge(query: str) -> str:
+            """Search merged fixes, notes, and documentation. Results are background, not evidence.
+
+            Args:
+                query: What to look up in past incidents and docs
+            """
+            res = gateway.execute_tool(
+                "retrieve_knowledge",
+                {"query": query},
+                bundle,
+                memory,
+                active_policy,
+                repo_root=repo_root,
+                max_tool_calls=max_tool_calls,
+            )
+            return json.dumps(res)
+
+        @tool
         def query_logs(pattern: str, limit: int = 20) -> str:
             """Query or filter recent application logs for specific search terms or error patterns.
 
@@ -287,4 +325,4 @@ class AgentCoreGateway:
             res = gateway.execute_tool("submit_rca", submission, bundle, memory, active_policy, repo_root=repo_root, max_tool_calls=max_tool_calls)
             return json.dumps(res)
 
-        return [query_logs, get_file, get_commit_diff, submit_rca]
+        return [retrieve_knowledge, query_logs, get_file, get_commit_diff, submit_rca]

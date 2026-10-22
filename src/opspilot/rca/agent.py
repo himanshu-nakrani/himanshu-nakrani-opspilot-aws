@@ -205,6 +205,13 @@ def run_rca_agent(
 
                 if not isinstance(tool_input, dict):
                     result = {"error": "tool input must be a JSON object"}
+                elif tool_name == "retrieve_knowledge":
+                    from opspilot.knowledge.retrieve import retrieve_knowledge
+
+                    result = retrieve_knowledge(
+                        str(tool_input.get("query", "")),
+                        knowledge_base_id=os.environ.get("KNOWLEDGE_BASE_ID", ""),
+                    )
                 elif tool_name == "query_logs":
                     result = execute_query_logs(bundle, str(tool_input.get("pattern", "")), min(int(tool_input.get("limit", 20) or 20), 50))
                 elif tool_name == "get_file":

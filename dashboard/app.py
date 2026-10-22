@@ -35,6 +35,8 @@ from opspilot.fix.agent import propose_fix, suggested_diff
 from opspilot.fix.codecommit import parse_pr_console_url
 from opspilot.fix.guardrails import PatchRejectedException
 from opspilot.fix.scm import get_scm_client
+from opspilot.knowledge.document import public_knowledge
+from opspilot.knowledge.ingest import sync_merged_solution
 from opspilot.verify.pr_check import BUILD_NOT_STARTED, begin_pr_verification, public_test, refresh_verification
 from opspilot.ingest import handle_alarm_event
 from opspilot.rca.agent import run_rca_agent
@@ -80,6 +82,10 @@ _INCIDENT_FIELDS = {
     "deploy_error",
     "deploy_execution_id",
     "deploy_stage",
+    "knowledge_status",
+    "knowledge_error",
+    "knowledge_s3_key",
+    "knowledge_job_id",
 }
 _OPTIONAL_TEXT = (
     "test_status",
@@ -95,6 +101,10 @@ _OPTIONAL_TEXT = (
     "deploy_error",
     "deploy_execution_id",
     "deploy_stage",
+    "knowledge_status",
+    "knowledge_error",
+    "knowledge_s3_key",
+    "knowledge_job_id",
     "human_ending",
 )
 
@@ -355,6 +365,7 @@ def list_incidents() -> List[Dict[str, Any]]:
             if item.get(key) == "":
                 item[key] = None
         item["human_ending"] = human_ending_text(item)
+        item["knowledge"] = public_knowledge(item)
     return sorted(items, key=lambda x: str(x.get("detected_at", "")), reverse=True)
 
 
@@ -571,6 +582,16 @@ def get_pipeline_client():
     return boto3.client("codepipeline", region_name=_aws_region())
 
 
+def get_knowledge_s3_client():
+    """S3 client for the knowledge-base document bucket. Tests replace this."""
+    return boto3.client("s3", region_name=_aws_region())
+
+
+def get_knowledge_agent_client():
+    """Bedrock Agent client that starts a knowledge-base ingestion job. Tests replace this."""
+    return boto3.client("bedrock-agent", region_name=_aws_region())
+
+
 def _scm_for_incident(inc: Dict[str, Any]):
     pr_url = inc.get("pr_url") or ""
     repo, _pr_from_url, region = parse_pr_console_url(pr_url)
@@ -651,8 +672,31 @@ def incident_pr_status(incident_id: str) -> Dict[str, Any]:
     if updates:
         _record_choice(incident_id, updates)
     merged = {**inc, **updates}
+    knowledge = public_knowledge(merged)
+    if body.get("is_merged") is True or body.get("status") == "merged":
+        try:
+            knowledge, knowledge_fields = sync_merged_solution(
+                merged,
+                body,
+                s3_client=get_knowledge_s3_client(),
+                agent_client=get_knowledge_agent_client(),
+                bucket=os.environ.get("KNOWLEDGE_BUCKET", ""),
+                knowledge_base_id=os.environ.get("KNOWLEDGE_BASE_ID", ""),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Knowledge ingest failed for %s: %s", incident_id, e)
+            knowledge_fields = {}
+            if knowledge is not None:
+                knowledge = {**knowledge, "status": "failed", "error": "The knowledge base document could not be stored."}
+        if knowledge_fields:
+            updates.update(knowledge_fields)
+            _record_choice(incident_id, knowledge_fields)
+            merged = {**inc, **updates}
+            if knowledge and knowledge.get("status") == "ingested":
+                knowledge = public_knowledge(merged)
     body["test"] = public_test(merged)
     body["deploy"] = public_deploy(merged)
+    body["knowledge"] = knowledge
     return body
 
 
