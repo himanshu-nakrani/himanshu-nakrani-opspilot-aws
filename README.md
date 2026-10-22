@@ -53,7 +53,7 @@ bash scripts/ec2.sh open-ports       # inbound TCP 8000 and 8001
 2. **The issue type decides the route:** `code_defect` → fix PR; `config_regression` → ticket + notify until a revert agent exists; `dependency`/`resource` → ticket + notify only.
 3. **A verified PR, not just a green build.** The patch agent must add a reproduction test that fails on `main` and passes on the fix branch. CodeBuild runs both checks.
 4. **Least privilege.** The LLM gets no AWS write permissions. Source control is AWS CodeCommit with IAM only (no Git tokens): the fix Lambda's role is scoped to the one repo ARN and can create branches/commits/PRs but has no merge permission, so a human merges every fix.
-5. **The model is configurable** (`BEDROCK_MODEL_ID`). The default is the Claude Haiku 5.5 global inference profile, `global.anthropic.claude-haiku-5-5`.
+5. **The model is configurable** (`BEDROCK_MODEL_ID`). The default is the Moonshot Kimi K3 US inference profile, `us.moonshotai.kimi-k3`.
 
 ## Agent Stack: AWS Strands Agents SDK + AgentCore-style components
 > **Honesty note:** the agent loop uses the real Strands SDK (`strands-agents`) and Bedrock.
