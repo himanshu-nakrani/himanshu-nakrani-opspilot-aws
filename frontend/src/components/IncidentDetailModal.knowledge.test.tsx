@@ -21,6 +21,34 @@ const incident = {
   },
 } as Incident;
 
+describe('reconstructed agent trace', () => {
+  it('shows the saved RCA steps when no live session was stored', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    render(
+      <IncidentDetailModal
+        incident={{
+          incident_id: '59dbcf8b',
+          service: 'sample-service',
+          status: 'NOTIFIED',
+          classification: 'code_defect',
+          confidence: 0.98,
+          summary: "Unhandled KeyError 'SPRING50' in checkout().",
+          evidence: [{ kind: 'log_line', ref: 'log-1', claim: "GET /checkout returned 500." }],
+          suggested_fix_strategy: 'Return 400 for an unknown coupon.',
+          source: 'dynamodb',
+        }}
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByText('Reconstructed from the saved RCA. The live agent session was not stored.')).toBeTruthy();
+    expect(screen.getByText(/Model call — code defect, 98%/)).toBeTruthy();
+    expect(screen.getByText(/log line log-1/)).toBeTruthy();
+    expect(screen.getByText(/Submitted RCA/)).toBeTruthy();
+    expect(screen.queryByText('No agent trace was recorded for this incident.')).toBeNull();
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('knowledge base preview', () => {
   it('shows the document that will be ingested on the pull request', async () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));

@@ -7,6 +7,7 @@ import {
   prStatusLabel,
   prStatusNotice,
   pullRequestUrl,
+  reconstructedTrace,
   showDeployPanel,
   showTestPanel,
   testStatusLabel,
@@ -18,6 +19,34 @@ const open = {
   status: 'AWAITING_CHOICE',
   can_raise_pr: true,
 };
+
+describe('reconstructedTrace', () => {
+  it('lists the model conclusion, each cited item, and the submitted fix', () => {
+    const steps = reconstructedTrace({
+      classification: 'code_defect',
+      confidence: 0.98,
+      summary: "Unhandled KeyError 'SPRING50' in checkout().",
+      evidence: [
+        { kind: 'log_line', ref: 'log-1', claim: "GET /checkout returned 500, KeyError 'SPRING50'." },
+        { kind: 'stack_frame', ref: 'sample_service/faults.py:209', claim: 'checkout indexes COUPONS[coupon].' },
+      ],
+      ruled_out: ['dependency', 'resource'],
+      suggested_fix_strategy: 'Return 400 for an unknown coupon.',
+    });
+    expect(steps.map((step) => step.label)).toEqual([
+      'Model call — code defect, 98%',
+      'log line log-1',
+      'stack frame sample_service/faults.py:209',
+      'Submitted RCA',
+    ]);
+    expect(steps[3].detail).toContain('Return 400 for an unknown coupon.');
+    expect(steps[3].detail).toContain('Ruled out dependency, resource.');
+  });
+
+  it('is empty when the incident stored nothing to reconstruct', () => {
+    expect(reconstructedTrace({ classification: null, confidence: null })).toEqual([]);
+  });
+});
 
 describe('fixChoiceActions', () => {
   it('offers Raise PR only when a generator exists for the diff', () => {

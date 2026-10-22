@@ -690,6 +690,36 @@ def _pr_incident(inc_id: str, pr_url: str, pr_number: int = 9) -> None:
     })
 
 
+def test_code_defect_middleware_frame_offers_checkout_patch_and_raise_pr():
+    """A notified code defect still shows the exact diff and Raise PR when a frame names checkout."""
+    inc_id = _seed_incident(
+        "inc-checkout-middleware",
+        status="NOTIFIED",
+        summary="Unhandled KeyError in checkout() for coupon SPRING50",
+        suspected_location={"file": "sample_service/faults.py", "line": 160, "function": "log_requests"},
+        evidence=[
+            {
+                "kind": "stack_frame",
+                "ref": "sample_service/faults.py:160",
+                "claim": "log_requests middleware re-raises the endpoint KeyError",
+            },
+            {
+                "kind": "stack_frame",
+                "ref": "sample_service/faults.py:209",
+                "claim": "checkout endpoint indexes COUPONS[coupon] and raises KeyError",
+            },
+        ],
+        suggested_fix_strategy="Validate the coupon before indexing COUPONS.",
+        patch_diff=None,
+        alarm_name="OpsPilotSampleService-CheckoutErrors",
+    )
+    with TestClient(dashboard_app) as client:
+        body = client.get(f"/api/incidents/{inc_id}").json()
+    assert body["can_raise_pr"] is True
+    assert "invalid coupon" in body["patch_diff"]
+    assert body["human_ending"] is None
+
+
 def test_fixture_branch_name_is_not_a_pull_request():
     """inc-eval-01 is a fixture. A branch label without an http link is not a CodeCommit PR."""
     from dashboard.app import LOCAL_INCIDENTS_CACHE

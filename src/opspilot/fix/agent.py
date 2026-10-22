@@ -7,6 +7,7 @@ patch limits, and manages branch and pull request creation.
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -101,14 +102,37 @@ class UnsupportedFixTarget(PatchRejectedException):
     """No patch generator exists for this RCA (classification or location)."""
 
 
+def _supported_function_in_frames(rca: RcaResult, file: str) -> Optional[str]:
+    """A patchable function named by a stack frame in ``file``.
+
+    The model often cites the middleware frame that re-raises (``log_requests``).
+    The endpoint frame in the same traceback is the line the stub can patch.
+    """
+    names = tuple(name for frame_file, name in _STUB_TARGETS if frame_file == file)
+    for item in rca.evidence:
+        if item.kind != "stack_frame" or not item.ref.startswith(f"{file}:"):
+            continue
+        for name in names:
+            if re.search(rf"\b{re.escape(name)}\b", item.claim, re.IGNORECASE):
+                return name
+    return None
+
+
 def target_function(rca: RcaResult) -> Optional[str]:
     """Function the stub can patch, or None when the RCA names no location.
 
     Only ``sample_service/app.py`` with no function name falls back to get_order.
+    A cited function that has no generator yields to a patchable function named
+    in another stack frame of the same file.
     """
     loc = rca.suspected_location
     if loc is None:
         return None
+    if loc.function and (loc.file, loc.function) in _STUB_TARGETS:
+        return loc.function
+    framed = _supported_function_in_frames(rca, loc.file)
+    if framed:
+        return framed
     if loc.function:
         return loc.function
     if loc.file == "sample_service/app.py":

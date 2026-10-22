@@ -167,13 +167,14 @@ def _http_pr_url(value: Any) -> Optional[str]:
 def apply_fix_offer(item: Dict[str, Any]) -> None:
     """Show the generator's diff when one exists. Raise PR only in that case.
 
-    An authored diff with no generator stays visible so the operator can apply it
-    themselves. Raise PR stays available after "I'll apply this myself" until a
-    pull request link exists.
+    A code defect whose stack frames name a patchable function gets that diff
+    even when the stored status is only NOTIFIED. An authored diff with no
+    generator stays visible so the operator can apply it themselves. Raise PR
+    stays available after "I'll apply this myself" until a pull request link exists.
     """
     rca = _rca_for_offer(item)
     generated = suggested_diff(rca) if rca is not None else None
-    if generated and (item.get("patch_diff") or item.get("status") == "AWAITING_CHOICE"):
+    if generated:
         item["patch_diff"] = generated
     pr_recorded = _http_pr_url(item.get("pr_url")) is not None or item.get("status") == "VERIFIED"
     item["can_raise_pr"] = bool(generated) and bool(item.get("patch_diff")) and not pr_recorded

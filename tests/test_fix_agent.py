@@ -168,6 +168,35 @@ def test_propose_fix_pr_failure_raises_instead_of_fake_url(sample_inputs):
         propose_fix(rca, ticket, github=FakeGitHub(fail_pr=True))
 
 
+def test_middleware_frame_still_offers_the_checkout_patch(sample_inputs):
+    """The model cited log_requests. The checkout frame in the same trace is the patch."""
+    rca, _ticket = sample_inputs
+    rca = rca.model_copy(
+        update={
+            "classification": "code_defect",
+            "confidence": 0.98,
+            "summary": "KeyError SPRING50 in checkout()",
+            "suspected_location": SuspectedLocation(
+                file="sample_service/faults.py", line=160, function="log_requests"
+            ),
+            "evidence": [
+                EvidenceItem(
+                    kind="stack_frame",
+                    ref="sample_service/faults.py:160",
+                    claim="log_requests middleware re-raises the endpoint KeyError",
+                ),
+                EvidenceItem(
+                    kind="stack_frame",
+                    ref="sample_service/faults.py:209",
+                    claim="checkout endpoint indexes COUPONS[coupon] and raises KeyError",
+                ),
+            ],
+        }
+    )
+    diff = suggested_diff(rca)
+    assert diff and "invalid coupon" in diff and "COUPONS.get" in diff
+
+
 def test_checkout_patch_applies_on_main_and_drops_the_suite_pin(sample_inputs):
     rca, ticket = sample_inputs
     rca = rca.model_copy(

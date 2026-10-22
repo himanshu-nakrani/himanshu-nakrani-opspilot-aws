@@ -16,6 +16,51 @@ interface IncidentDetailModalProps {
 
 const sectionTitle = `${eyebrow} mb-2 flex items-center gap-1.5`;
 
+export interface ReconstructedStep {
+  id: string;
+  label: string;
+  detail: string;
+}
+
+/** Steps taken from the stored RCA when the live agent session was not kept. */
+export function reconstructedTrace(
+  incident: Pick<
+    Incident,
+    'classification' | 'confidence' | 'summary' | 'evidence' | 'ruled_out' | 'suggested_fix_strategy'
+  >,
+): ReconstructedStep[] {
+  const steps: ReconstructedStep[] = [];
+  const pct = incident.confidence == null || Number.isNaN(incident.confidence) ? null : Math.round(incident.confidence * 100);
+  const classLabel = incident.classification ? humanize(incident.classification) : '';
+  const headline = [classLabel, pct == null ? '' : `${pct}%`].filter(Boolean).join(', ');
+  const summary = (incident.summary || '').trim();
+  if (headline || summary) {
+    steps.push({
+      id: 'model',
+      label: headline ? `Model call — ${headline}` : 'Model call',
+      detail: summary,
+    });
+  }
+  (incident.evidence || []).forEach((ev, i) => {
+    steps.push({
+      id: `evidence-${i}`,
+      label: `${humanize(ev.kind)} ${ev.ref}`.trim(),
+      detail: (ev.claim || '').trim(),
+    });
+  });
+  const strategy = (incident.suggested_fix_strategy || '').trim();
+  const ruledOut = (incident.ruled_out || []).map((item) => item.trim()).filter(Boolean);
+  if (strategy || ruledOut.length > 0) {
+    const ruled = ruledOut.length > 0 ? `Ruled out ${ruledOut.join(', ')}.` : '';
+    steps.push({
+      id: 'submitted',
+      label: 'Submitted RCA',
+      detail: [strategy, ruled].filter(Boolean).join(' '),
+    });
+  }
+  return steps;
+}
+
 const quietButton = btn.secondary;
 const signalButton = btn.accent;
 
@@ -227,6 +272,7 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
   const pct = incident.confidence === null || incident.confidence === undefined ? null : Math.round(incident.confidence * 100);
   const tone = confidenceTone(pct);
   const evidence = incident.evidence ?? [];
+  const traceSteps = incident.agent_run_id ? [] : reconstructedTrace(incident);
   const loc = incident.suspected_location;
   const prLink = prAbsent ? null : pullRequestUrl(incident.pr_url);
   const actions = fixChoiceActions(
@@ -605,12 +651,24 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
         <h3 className={sectionTitle}>Agent trace</h3>
         {incident.agent_run_id ? (
           <AgentTrace runId={incident.agent_run_id} compact />
+        ) : traceSteps.length > 0 ? (
+          <div>
+            <p className="text-xs text-ink-400 mb-2">
+              Reconstructed from the saved RCA. The live agent session was not stored.
+            </p>
+            <ol className="space-y-2">
+              {traceSteps.map((step, index) => (
+                <li key={step.id} className="p-3 rounded-lg bg-ink-950/50 border border-ink-800 text-xs">
+                  <div className="font-mono text-ink-400">
+                    {index + 1}. {step.label}
+                  </div>
+                  {step.detail && <p className="text-ink-200 mt-1 leading-relaxed">{step.detail}</p>}
+                </li>
+              ))}
+            </ol>
+          </div>
         ) : (
-          <p className="text-xs text-ink-400">
-            {incident.source === 'simulated'
-              ? 'No agent run: this root cause is scripted by the simulation scenario.'
-              : 'No agent trace was recorded for this incident.'}
-          </p>
+          <p className="text-xs text-ink-400">No agent trace was recorded for this incident.</p>
         )}
       </section>
 
