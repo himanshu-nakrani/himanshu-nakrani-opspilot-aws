@@ -1,0 +1,23 @@
+{
+  "id": "fixture-07-memory-oom-killed",
+  "name": "Out of memory error in batch worker",
+  "gold": {
+    "classification": "resource",
+    "route": "notify",
+    "should_abstain": false
+  },
+  "context_bundle": {
+    "incident_id": "inc-eval-07",
+    "service": "sample-service",
+    "log_group": "/aws/lambda/opspilot-sample-service",
+    "detected_at": "2026-10-20T12:00:00Z",
+    "log_lines": [
+      {"id": "log-1", "timestamp": "2026-10-20T12:00:00Z", "message": "Processing high-volume order batch chunk=50000 items"},
+      {"id": "log-2", "timestamp": "2026-10-20T12:00:08Z", "message": "MemoryError: Unable to allocate 1.8 GiB buffer for batch processing. Out of memory."}
+    ],
+    "stack_trace": null,
+    "repo": "himanshu-nakrani/opspilot-aws-poc",
+    "repo_files": {},
+    "recent_commits": []
+  }
+}

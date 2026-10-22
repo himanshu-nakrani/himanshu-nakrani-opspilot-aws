@@ -1,0 +1,23 @@
+{
+  "id": "fixture-04-downstream-payment-timeout",
+  "name": "External payment gateway read timeout",
+  "gold": {
+    "classification": "dependency",
+    "route": "notify",
+    "should_abstain": false
+  },
+  "context_bundle": {
+    "incident_id": "inc-eval-04",
+    "service": "sample-service",
+    "log_group": "/aws/lambda/opspilot-sample-service",
+    "detected_at": "2026-10-20T12:00:00Z",
+    "log_lines": [
+      {"id": "log-1", "timestamp": "2026-10-20T12:00:00Z", "message": "Invoking payment processor at https://api.stripe.com/v1/charges"},
+      {"id": "log-2", "timestamp": "2026-10-20T12:00:30Z", "message": "httpx.ReadTimeout: The read operation timed out connecting to payment gateway"}
+    ],
+    "stack_trace": null,
+    "repo": "himanshu-nakrani/opspilot-aws-poc",
+    "repo_files": {},
+    "recent_commits": []
+  }
+}

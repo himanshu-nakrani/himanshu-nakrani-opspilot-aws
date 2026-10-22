@@ -1,0 +1,23 @@
+{
+  "id": "fixture-06-db-pool-exhaustion",
+  "name": "Database connection pool exhausted",
+  "gold": {
+    "classification": "resource",
+    "route": "notify",
+    "should_abstain": false
+  },
+  "context_bundle": {
+    "incident_id": "inc-eval-06",
+    "service": "sample-service",
+    "log_group": "/aws/lambda/opspilot-sample-service",
+    "detected_at": "2026-10-20T12:00:00Z",
+    "log_lines": [
+      {"id": "log-1", "timestamp": "2026-10-20T12:00:00Z", "message": "Acquiring connection from Postgres pool..."},
+      {"id": "log-2", "timestamp": "2026-10-20T12:00:15Z", "message": "psycopg2.OperationalError: connection pool exhausted (max_connections=20 reached, queue timeout=15s)"}
+    ],
+    "stack_trace": null,
+    "repo": "himanshu-nakrani/opspilot-aws-poc",
+    "repo_files": {},
+    "recent_commits": []
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "fixture-08-auth-provider-503-unavailable",
+  "name": "Upstream OAuth2 identity provider 503 outage",
+  "gold": {
+    "classification": "dependency",
+    "route": "notify",
+    "should_abstain": false
+  },
+  "context_bundle": {
+    "incident_id": "inc-eval-08",
+    "service": "sample-service",
+    "log_group": "/aws/lambda/opspilot-sample-service",
+    "detected_at": "2026-10-20T12:00:00Z",
+    "log_lines": [
+      {"id": "log-1", "timestamp": "2026-10-20T12:00:00Z", "message": "Validating JWT bearer token with IdP endpoint https://auth.company.com/oauth/v2/token"},
+      {"id": "log-2", "timestamp": "2026-10-20T12:00:02Z", "message": "httpx.HTTPStatusError: 503 Service Unavailable returned by external auth gateway"}
+    ],
+    "stack_trace": null,
+    "repo": "himanshu-nakrani/opspilot-aws-poc",
+    "repo_files": {},
+    "recent_commits": []
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "fixture-05-noise-logs-no-fault",
+  "name": "Healthy informational logs with no error or stack trace",
+  "gold": {
+    "classification": "insufficient_evidence",
+    "route": "notify",
+    "should_abstain": true
+  },
+  "context_bundle": {
+    "incident_id": "inc-eval-05",
+    "service": "sample-service",
+    "log_group": "/aws/lambda/opspilot-sample-service",
+    "detected_at": "2026-10-20T12:00:00Z",
+    "log_lines": [
+      {"id": "log-1", "timestamp": "2026-10-20T12:00:00Z", "message": "INFO [app] Received request GET /health"},
+      {"id": "log-2", "timestamp": "2026-10-20T12:00:00Z", "message": "INFO [app] Handled request successfully status=200"},
+      {"id": "log-3", "timestamp": "2026-10-20T12:00:05Z", "message": "INFO [app] Periodic metrics flush completed"}
+    ],
+    "stack_trace": null,
+    "repo": "himanshu-nakrani/opspilot-aws-poc",
+    "repo_files": {},
+    "recent_commits": []
+  }
+}

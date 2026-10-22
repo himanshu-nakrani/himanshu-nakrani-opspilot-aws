@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpsPilot — SRE Autonomous Agent Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              500: '#22c55e',
+              600: '#16a34a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    pre, code { font-family: 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-emerald-500 selection:text-slate-950">
+
+  <!-- Navigation Bar -->
+  <header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-lg shadow-inner">
+          ⚡
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-lg tracking-tight text-white">OpsPilot</span>
+            <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">AWS POC</span>
+            <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono">Strands + AgentCore</span>
+          </div>
+          <p class="text-xs text-slate-400">Autonomous Incident Monitoring & Remediating Agent</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <button id="btn-trigger" onclick="triggerIncident()" class="px-3.5 py-1.5 text-xs font-medium rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 transition flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>
+          Simulate Incident (M1)
+        </button>
+
+        <button id="btn-eval" onclick="runEvalsModal()" class="px-3.5 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center gap-1.5">
+          <span>🧪</span> Run M6 Evals
+        </button>
+
+        <button onclick="fetchData()" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition" title="Refresh data">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+    <!-- KPI Metric Cards -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div class="bg-slate-900/50 border border-slate-800/80 rounded-xl p-4">
+        <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Incidents</span>
+        <div id="stat-total" class="text-2xl font-bold text-white mt-1">--</div>
+        <span class="text-xs text-slate-500">Dedup window: 15 min</span>
+      </div>
+
+      <div class="bg-slate-900/50 border border-slate-800/80 rounded-xl p-4">
+        <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Mean RCA Confidence</span>
+        <div id="stat-conf" class="text-2xl font-bold text-emerald-400 mt-1">--%</div>
+        <span class="text-xs text-slate-500">Grounding verified</span>
+      </div>
+
+      <div class="bg-slate-900/50 border border-slate-800/80 rounded-xl p-4">
+        <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">PRs Proposed</span>
+        <div id="stat-prs" class="text-2xl font-bold text-purple-400 mt-1">--</div>
+        <span class="text-xs text-slate-500">≤3 files, ≤80 lines limit</span>
+      </div>
+
+      <div class="bg-slate-900/50 border border-slate-800/80 rounded-xl p-4">
+        <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Verification Pass Rate</span>
+        <div id="stat-verify" class="text-2xl font-bold text-blue-400 mt-1">--%</div>
+        <span class="text-xs text-slate-500">Two-phase CodeBuild</span>
+      </div>
+
+      <div class="bg-slate-900/50 border border-slate-800/80 rounded-xl p-4">
+        <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Pipeline Route</span>
+        <div id="stat-route" class="text-2xl font-bold text-amber-400 mt-1">Active</div>
+        <span class="text-xs text-slate-500">Step Functions orchestrated</span>
+      </div>
+    </section>
+
+    <!-- Architecture & Lifecycle Banner -->
+    <section class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 sm:p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Autonomous SRE Pipeline Architecture</h2>
+        <span class="text-xs text-slate-500">Step Functions: <code class="text-slate-400">opspilot</code></span>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-7 gap-2 text-center text-xs">
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-lg p-2.5">
+          <div class="font-medium text-slate-200">1. Alarm Ingest</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">EventBridge + Dedup</div>
+        </div>
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-lg p-2.5">
+          <div class="font-medium text-slate-200">2. Context</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Logs Insights ±10m</div>
+        </div>
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-lg p-2.5">
+          <div class="font-medium text-slate-200">3. Bedrock RCA</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Tool-use Converse</div>
+        </div>
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-lg p-2.5">
+          <div class="font-medium text-slate-200">4. OpsCenter OpsItem</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">REST v3 + ADF</div>
+        </div>
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-lg p-2.5">
+          <div class="font-medium text-slate-200">5. Propose Fix</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Repro test + PR</div>
+        </div>
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-lg p-2.5">
+          <div class="font-medium text-slate-200">6. Verify</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">CodeBuild 2-Phase</div>
+        </div>
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-lg p-2.5 col-span-2 md:col-span-1">
+          <div class="font-medium text-slate-200">7. Notify</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Slack + SNS</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Incidents Table Section -->
+    <section class="bg-slate-900/50 border border-slate-800/80 rounded-xl overflow-hidden shadow-sm">
+      <div class="p-4 sm:p-5 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base font-semibold text-white">Recorded Incidents Stream</h2>
+          <p class="text-xs text-slate-400 mt-0.5">Audited from DynamoDB <code class="text-slate-300">opspilot-incidents</code> and local fixtures</p>
+        </div>
+
+        <!-- Filter Buttons -->
+        <div class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
+          <button onclick="setFilter('all')" id="tab-all" class="px-2.5 py-1 rounded font-medium bg-slate-800 text-white">All</button>
+          <button onclick="setFilter('code_defect')" id="tab-code_defect" class="px-2.5 py-1 rounded font-medium text-slate-400 hover:text-white">Defects</button>
+          <button onclick="setFilter('config_regression')" id="tab-config_regression" class="px-2.5 py-1 rounded font-medium text-slate-400 hover:text-white">Configs</button>
+          <button onclick="setFilter('dependency')" id="tab-dependency" class="px-2.5 py-1 rounded font-medium text-slate-400 hover:text-white">Dependencies</button>
+          <button onclick="setFilter('insufficient_evidence')" id="tab-insufficient_evidence" class="px-2.5 py-1 rounded font-medium text-slate-400 hover:text-white">Abstained</button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-950/60 text-slate-400 font-semibold border-b border-slate-800 uppercase tracking-wider text-[11px]">
+            <tr>
+              <th class="py-3 px-4">Incident ID</th>
+              <th class="py-3 px-4">Detected</th>
+              <th class="py-3 px-4">Classification</th>
+              <th class="py-3 px-4">Confidence</th>
+              <th class="py-3 px-4">Severity</th>
+              <th class="py-3 px-4">Ticket</th>
+              <th class="py-3 px-4">Fix PR</th>
+              <th class="py-3 px-4">Status</th>
+              <th class="py-3 px-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="incidents-body" class="divide-y divide-slate-800/60 font-normal">
+            <tr>
+              <td colspan="9" class="py-8 text-center text-slate-500">Loading incidents stream...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Incident Details Modal -->
+  <div id="modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700/80 rounded-xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+      <div class="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
+        <div>
+          <h3 id="modal-title" class="font-semibold text-base text-white">Incident Detail</h3>
+          <p id="modal-subtitle" class="text-xs text-slate-400 mt-0.5"></p>
+        </div>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="p-5 overflow-y-auto space-y-5 text-xs">
+        <div>
+          <h4 class="font-semibold text-slate-300 uppercase tracking-wider text-[11px] mb-1.5">RCA Summary</h4>
+          <p id="modal-summary" class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-slate-300 leading-relaxed"></p>
+        </div>
+
+        <div id="modal-location-container">
+          <h4 class="font-semibold text-slate-300 uppercase tracking-wider text-[11px] mb-1.5">Suspected Faulting Location</h4>
+          <div id="modal-location" class="bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-emerald-400"></div>
+        </div>
+
+        <div>
+          <h4 class="font-semibold text-slate-300 uppercase tracking-wider text-[11px] mb-1.5">Grounded Evidence Breakdown</h4>
+          <div id="modal-evidence" class="space-y-1.5"></div>
+        </div>
+
+        <div id="modal-diff-container">
+          <h4 class="font-semibold text-slate-300 uppercase tracking-wider text-[11px] mb-1.5">Automated Fix Unified Diff (≤80 Lines Limit)</h4>
+          <pre id="modal-diff" class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-slate-300 overflow-x-auto text-[11px] max-h-48"></pre>
+        </div>
+
+        <div>
+          <h4 class="font-semibold text-slate-300 uppercase tracking-wider text-[11px] mb-1.5">Suggested Fix Strategy</h4>
+          <p id="modal-strategy" class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-slate-300"></p>
+        </div>
+      </div>
+
+      <div class="p-4 border-t border-slate-800 bg-slate-950/40 flex justify-end">
+        <button onclick="closeModal()" class="px-4 py-2 text-xs font-medium bg-slate-800 hover:bg-slate-700 rounded-lg text-white transition">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Eval Results Modal -->
+  <div id="eval-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700/80 rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+      <div class="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
+        <div>
+          <h3 class="font-semibold text-base text-white">🧪 OpsPilot M6 Benchmark Evaluation</h3>
+          <p class="text-xs text-slate-400 mt-0.5">Automated replay of 10 golden fixtures through RCA & router</p>
+        </div>
+        <button onclick="closeEvalModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="p-5 overflow-y-auto space-y-4 text-xs">
+        <div id="eval-metrics" class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center"></div>
+
+        <div class="border border-slate-800 rounded-lg overflow-hidden">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-950 text-slate-400 text-[11px] uppercase tracking-wider border-b border-slate-800">
+              <tr>
+                <th class="p-2.5">Fixture</th>
+                <th class="p-2.5">Gold Type</th>
+                <th class="p-2.5">Predicted</th>
+                <th class="p-2.5">Route</th>
+                <th class="p-2.5">Confidence</th>
+                <th class="p-2.5">Verdict</th>
+              </tr>
+            </thead>
+            <tbody id="eval-table-body" class="divide-y divide-slate-800/80 bg-slate-950/40"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="p-4 border-t border-slate-800 bg-slate-950/40 flex justify-end">
+        <button onclick="closeEvalModal()" class="px-4 py-2 text-xs font-medium bg-slate-800 hover:bg-slate-700 rounded-lg text-white transition">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="fixed bottom-5 right-5 z-50 hidden bg-slate-900 border border-emerald-500/30 text-white px-4 py-3 rounded-lg shadow-xl text-xs flex items-center gap-2">
+    <span class="text-emerald-400">✔</span>
+    <span id="toast-msg">Operation completed.</span>
+  </div>
+
+  <script>
+    let allIncidents = [];
+    let currentFilter = 'all';
+
+    async function fetchData() {
+      try {
+        const [incRes, statsRes] = await Promise.all([
+          fetch('/api/incidents'),
+          fetch('/api/stats')
+        ]);
+        allIncidents = await incRes.json();
+        const stats = await statsRes.json();
+
+        // Update stats
+        document.getElementById('stat-total').innerText = stats.total_incidents || 0;
+        document.getElementById('stat-conf').innerText = `${Math.round((stats.mean_confidence || 0) * 100)}%`;
+        document.getElementById('stat-prs').innerText = stats.total_prs_opened || 0;
+        document.getElementById('stat-verify').innerText = `${Math.round((stats.verification_pass_rate || 0) * 100)}%`;
+
+        renderIncidents();
+      } catch (err) {
+        console.error("Failed to load dashboard data:", err);
+      }
+    }
+
+    function setFilter(filter) {
+      currentFilter = filter;
+      ['all', 'code_defect', 'config_regression', 'dependency', 'insufficient_evidence'].forEach(f => {
+        const el = document.getElementById(`tab-${f}`);
+        if (!el) return;
+        if (f === filter) {
+          el.className = "px-2.5 py-1 rounded font-medium bg-slate-800 text-white";
+        } else {
+          el.className = "px-2.5 py-1 rounded font-medium text-slate-400 hover:text-white";
+        }
+      });
+      renderIncidents();
+    }
+
+    function renderIncidents() {
+      const tbody = document.getElementById('incidents-body');
+      const filtered = currentFilter === 'all' 
+        ? allIncidents 
+        : allIncidents.filter(i => i.classification === currentFilter);
+
+      if (!filtered || filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="py-8 text-center text-slate-500">No incidents found for current filter.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(inc => {
+        const clsColors = {
+          code_defect: "bg-red-500/10 text-red-400 border-red-500/20",
+          config_regression: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+          dependency: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+          resource: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+          insufficient_evidence: "bg-slate-500/10 text-slate-400 border-slate-500/20",
+        };
+        const clsBadge = `<span class="px-2 py-0.5 rounded-full border text-[11px] ${clsColors[inc.classification] || clsColors.code_defect}">${inc.classification || 'unknown'}</span>`;
+        
+        const confPct = Math.round((inc.confidence || 0) * 100);
+        const confBar = `
+          <div class="flex items-center gap-1.5">
+            <div class="w-16 bg-slate-800 rounded-full h-1.5 overflow-hidden">
+              <div class="bg-emerald-400 h-1.5" style="width: ${confPct}%"></div>
+            </div>
+            <span class="text-[11px] text-slate-400">${confPct}%</span>
+          </div>`;
+
+        const ticketLink = inc.ticket_key 
+          ? `<a href="${inc.ticket_url || '#'}" target="_blank" class="text-blue-400 hover:underline font-mono">${inc.ticket_key}</a>` 
+          : `<span class="text-slate-600">--</span>`;
+
+        const prLink = inc.pr_branch 
+          ? `<a href="${inc.pr_url || '#'}" target="_blank" class="text-purple-400 hover:underline font-mono">${inc.pr_branch}</a>` 
+          : `<span class="text-slate-600">--</span>`;
+
+        const sevColors = {
+          sev1: "text-red-400 font-bold",
+          sev2: "text-amber-400 font-semibold",
+          sev3: "text-yellow-400",
+          sev4: "text-slate-400",
+        };
+        const sevSpan = `<span class="${sevColors[inc.severity] || 'text-slate-400'}">${(inc.severity || 'sev2').toUpperCase()}</span>`;
+
+        return `
+          <tr class="hover:bg-slate-900/80 transition">
+            <td class="py-3 px-4 font-mono font-medium text-slate-300">${inc.incident_id ? inc.incident_id.substring(0, 12) + '...' : '--'}</td>
+            <td class="py-3 px-4 text-slate-400">${inc.detected_at ? new Date(inc.detected_at).toLocaleTimeString() : '--'}</td>
+            <td class="py-3 px-4">${clsBadge}</td>
+            <td class="py-3 px-4">${confBar}</td>
+            <td class="py-3 px-4">${sevSpan}</td>
+            <td class="py-3 px-4">${ticketLink}</td>
+            <td class="py-3 px-4">${prLink}</td>
+            <td class="py-3 px-4"><span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px]">${inc.status || 'PROCESSED'}</span></td>
+            <td class="py-3 px-4 text-right">
+              <button onclick="inspectIncident('${inc.incident_id}')" class="px-2.5 py-1 text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition text-[11px]">Inspect</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function inspectIncident(id) {
+      const inc = allIncidents.find(i => i.incident_id === id);
+      if (!inc) return;
+
+      document.getElementById('modal-title').innerText = `Incident: ${inc.incident_id.substring(0, 16)}...`;
+      document.getElementById('modal-subtitle').innerText = `Service: ${inc.service || 'sample-service'} | Status: ${inc.status || 'VERIFIED'}`;
+      document.getElementById('modal-summary').innerText = inc.summary || "No detailed summary available.";
+
+      const locDiv = document.getElementById('modal-location');
+      const locContainer = document.getElementById('modal-location-container');
+      if (inc.suspected_location) {
+        locContainer.classList.remove('hidden');
+        locDiv.innerText = `${inc.suspected_location.file}:${inc.suspected_location.line}` + (inc.suspected_location.function ? ` in ${inc.suspected_location.function}()` : '');
+      } else {
+        locContainer.classList.add('hidden');
+      }
+
+      const evContainer = document.getElementById('modal-evidence');
+      if (inc.evidence && inc.evidence.length > 0) {
+        evContainer.innerHTML = inc.evidence.map(e => `
+          <div class="bg-slate-950 border border-slate-800/80 rounded p-2 text-slate-300 flex items-start gap-2">
+            <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-mono text-emerald-400 uppercase">${e.kind}</span>
+            <div>
+              <span class="font-mono text-slate-400">${e.ref}</span>: ${e.claim}
+            </div>
+          </div>
+        `).join('');
+      } else {
+        evContainer.innerHTML = `<p class="text-slate-500 italic">No specific evidence records attached.</p>`;
+      }
+
+      const diffContainer = document.getElementById('modal-diff-container');
+      const diffPre = document.getElementById('modal-diff');
+      if (inc.patch_diff) {
+        diffContainer.classList.remove('hidden');
+        diffPre.innerText = inc.patch_diff;
+      } else {
+        diffContainer.classList.add('hidden');
+      }
+
+      document.getElementById('modal-strategy').innerText = inc.suggested_fix_strategy || "Standard remediation strategy.";
+
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('modal').classList.add('hidden');
+    }
+
+    async function triggerIncident() {
+      const btn = document.getElementById('btn-trigger');
+      btn.disabled = true;
+      btn.innerText = "Triggering (5 calls)...";
+      try {
+        const resp = await fetch('/api/trigger', { method: 'POST' });
+        const res = await resp.json();
+        showToast(res.message || "Incident triggered successfully!");
+        await fetchData();
+      } catch (err) {
+        showToast("Error triggering incident.");
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span> Simulate Incident (M1)`;
+      }
+    }
+
+    async function runEvalsModal() {
+      const btn = document.getElementById('btn-eval');
+      btn.disabled = true;
+      btn.innerText = "Running M6 evals...";
+      try {
+        const resp = await fetch('/api/evals');
+        const res = await resp.json();
+
+        const metricsDiv = document.getElementById('eval-metrics');
+        metricsDiv.innerHTML = `
+          <div class="bg-slate-950 border border-slate-800 p-2.5 rounded-lg">
+            <div class="text-slate-400 text-[10px] uppercase font-medium">Accuracy</div>
+            <div class="text-lg font-bold text-emerald-400">${res.classification_accuracy.toFixed(1)}%</div>
+          </div>
+          <div class="bg-slate-950 border border-slate-800 p-2.5 rounded-lg">
+            <div class="text-slate-400 text-[10px] uppercase font-medium">Router Accuracy</div>
+            <div class="text-lg font-bold text-blue-400">${res.route_accuracy.toFixed(1)}%</div>
+          </div>
+          <div class="bg-slate-950 border border-slate-800 p-2.5 rounded-lg">
+            <div class="text-slate-400 text-[10px] uppercase font-medium">Location Hit Rate</div>
+            <div class="text-lg font-bold text-purple-400">${res.location_hit_rate.toFixed(1)}%</div>
+          </div>
+          <div class="bg-slate-950 border border-slate-800 p-2.5 rounded-lg">
+            <div class="text-slate-400 text-[10px] uppercase font-medium">Abstention Precision</div>
+            <div class="text-lg font-bold text-amber-400">${res.abstention_precision.toFixed(1)}%</div>
+          </div>
+        `;
+
+        const tableBody = document.getElementById('eval-table-body');
+        tableBody.innerHTML = res.details.map(d => `
+          <tr>
+            <td class="p-2.5 font-mono text-slate-300">${d.id}</td>
+            <td class="p-2.5 text-slate-400">${d.gold_cls}</td>
+            <td class="p-2.5 text-slate-200 font-medium">${d.pred_cls}</td>
+            <td class="p-2.5 font-mono text-slate-400">${d.pred_route}</td>
+            <td class="p-2.5 text-slate-400">${d.confidence}</td>
+            <td class="p-2.5">${d.status}</td>
+          </tr>
+        `).join('');
+
+        document.getElementById('eval-modal').classList.remove('hidden');
+      } catch (err) {
+        showToast("Failed to run evals.");
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>🧪</span> Run M6 Evals`;
+      }
+    }
+
+    function closeEvalModal() {
+      document.getElementById('eval-modal').classList.add('hidden');
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-msg').innerText = msg;
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 3500);
+    }
+
+    // Auto-fetch on load
+    fetchData();
+    setInterval(fetchData, 10000);
+  </script>
+</body>
+</html>

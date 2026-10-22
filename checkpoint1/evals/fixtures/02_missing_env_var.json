@@ -1,0 +1,23 @@
+{
+  "id": "fixture-02-missing-env-var",
+  "name": "Missing DATABASE_URL environment variable",
+  "gold": {
+    "classification": "config_regression",
+    "route": "notify",
+    "should_abstain": false
+  },
+  "context_bundle": {
+    "incident_id": "inc-eval-02",
+    "service": "sample-service",
+    "log_group": "/aws/lambda/opspilot-sample-service",
+    "detected_at": "2026-10-20T12:00:00Z",
+    "log_lines": [
+      {"id": "log-1", "timestamp": "2026-10-20T12:00:00Z", "message": "Starting service initialization..."},
+      {"id": "log-2", "timestamp": "2026-10-20T12:00:01Z", "message": "FATAL: Config error: Missing required environment variable 'DATABASE_URL'"}
+    ],
+    "stack_trace": null,
+    "repo": "himanshu-nakrani/opspilot-aws-poc",
+    "repo_files": {},
+    "recent_commits": []
+  }
+}

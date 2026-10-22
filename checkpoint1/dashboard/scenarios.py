@@ -1,0 +1,268 @@
+"""Canned incident scenarios for the dashboard's "Simulate incident" demo.
+
+Each scenario is a believable alarm for sample-service with a pre-written RCA. Only
+``null_order`` drives real traffic (5 calls to the planted /orders/999 bug); the rest are
+synthetic alarms. Outcomes follow opspilot.route: a suggested diff is offered only for a code_defect
+at >= 0.60 confidence whose suspected location is named by a stack_frame. The pipeline
+does not open the pull request; the incident screen does. Everything else notifies the SRE.
+"""
+
+from typing import Any, Dict, List, Optional
+
+from opspilot.fix.agent import CHECKOUT_PATCH, CREATE_ORDER_PATCH, GET_ORDER_PATCH, PAYMENTS_PATCH
+
+DEFAULT_SCENARIO = "null_order"
+
+SCENARIOS: Dict[str, Dict[str, Any]] = {
+    "null_order": {
+        "label": "Null order lookup",
+        "description": "GET /orders/999 hits the planted bug: None.total raises AttributeError.",
+        "probe_path": "/orders/999",
+        "alarm_name": "OpsPilotSampleServiceErrors",
+        "alarm_reason": "{failed} unhandled AttributeError tracebacks",
+        "classification": "code_defect",
+        "confidence": 0.94,
+        "severity": "sev2",
+        "summary": "AttributeError on missing order ID in sample_service/app.py:29: None.total accessed without null check.",
+        "suspected_location": {"file": "sample_service/app.py", "line": 29, "function": "get_order"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "AttributeError: 'NoneType' object has no attribute 'total'"},
+            {"kind": "stack_frame", "ref": "sample_service/app.py:29", "claim": "Exception raised on order.total access"},
+        ],
+        "patch_diff": GET_ORDER_PATCH,
+        "suggested_fix_strategy": "Return 404 HTTPException if order ID does not exist in store.",
+    },
+    "missing_field": {
+        "label": "Missing request field",
+        "description": "POST /orders without customer_id raises KeyError in create_order().",
+        "alarm_name": "OpsPilotSampleServiceErrors",
+        "alarm_reason": "12 unhandled KeyError tracebacks in 5 minutes",
+        "classification": "code_defect",
+        "confidence": 0.9,
+        "severity": "sev2",
+        "summary": "Unhandled KeyError 'customer_id' in sample_service/app.py:41 in create_order(): payload field read without validation.",
+        "suspected_location": {"file": "sample_service/app.py", "line": 41, "function": "create_order"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "KeyError: 'customer_id'"},
+            {"kind": "stack_frame", "ref": "sample_service/app.py:41", "claim": "payload['customer_id'] accessed directly"},
+        ],
+        "patch_diff": CREATE_ORDER_PATCH,
+        "suggested_fix_strategy": "Validate the request body and return 422 when customer_id is missing.",
+    },
+    "unknown_coupon": {
+        "label": "Unknown coupon",
+        "description": "GET /checkout with coupon SPRING50 raises KeyError because the code is not in the catalog.",
+        "alarm_name": "OpsPilotSampleService-CheckoutErrors",
+        "alarm_reason": "KeyError SPRING50 on checkout",
+        "classification": "code_defect",
+        "confidence": 0.91,
+        "severity": "sev2",
+        "summary": "KeyError 'SPRING50' in checkout(): an unknown coupon is indexed without a check.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 177, "function": "checkout"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "KeyError: 'SPRING50'"},
+            {"kind": "stack_frame", "ref": "sample_service/faults.py:177", "claim": "COUPONS[coupon]"},
+        ],
+        "patch_diff": CHECKOUT_PATCH,
+        "suggested_fix_strategy": "Return 400 when the coupon code is not in the catalog.",
+    },
+    "legacy_payment": {
+        "label": "Legacy payment delay",
+        "description": "GET /payments/77/status?provider=legacy blocks on the legacy gateway.",
+        "alarm_name": "OpsPilotSampleService-LatencyP95",
+        "alarm_reason": "legacy provider latency",
+        "classification": "code_defect",
+        "confidence": 0.88,
+        "severity": "sev3",
+        "summary": "payment_status sleeps on the legacy provider and holds the request.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 202, "function": "payment_status"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "legacy provider blocked the status read"},
+            {"kind": "stack_frame", "ref": "sample_service/faults.py:202", "claim": "time.sleep(LEGACY_GATEWAY_LATENCY_S)"},
+        ],
+        "patch_diff": PAYMENTS_PATCH,
+        "suggested_fix_strategy": "Do not call the legacy gateway inline.",
+    },
+    "inventory_timeout": {
+        "label": "Inventory database timeout",
+        "description": "GET /inventory/BULK-42 waits on inventory-db and raises TimeoutError.",
+        "alarm_name": "OpsPilotSampleService-InventoryDbTimeouts",
+        "alarm_reason": "inventory-db connection timeouts",
+        "classification": "dependency",
+        "confidence": 0.9,
+        "severity": "sev2",
+        "summary": "Inventory lookup for BULK-42 hits a database timeout talking to inventory-db.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 112, "function": "inventory"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "InventoryDbTimeout: connect to inventory-db.internal timed out"},
+        ],
+        "suggested_fix_strategy": "A person has to look at the inventory database. There is no code patch.",
+    },
+    "report_export": {
+        "label": "Report export out of memory",
+        "description": "GET /reports/export?days=90 buffers the whole export and runs out of memory.",
+        "alarm_name": "OpsPilotSampleService-Crashes",
+        "alarm_reason": "Runtime.OutOfMemory during export",
+        "classification": "resource",
+        "confidence": 0.86,
+        "severity": "sev2",
+        "summary": "The report export runs out of memory while buffering 90 days of rows.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 206, "function": "export_report"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "Runtime.OutOfMemory while exporting the report"},
+        ],
+        "suggested_fix_strategy": "A person has to change how the export uses memory. There is no code patch.",
+    },
+    "divide_by_zero": {
+        "label": "Low-confidence code defect",
+        "description": "ZeroDivisionError with a partial stack trace; confidence is below the 0.60 fix threshold.",
+        "alarm_name": "OpsPilotSampleServiceErrors",
+        "alarm_reason": "3 ZeroDivisionError tracebacks in 5 minutes",
+        "classification": "code_defect",
+        "confidence": 0.52,
+        "severity": "sev3",
+        "summary": "ZeroDivisionError while computing average basket size; stack trace is truncated so the exact line is uncertain.",
+        "suspected_location": None,
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "ZeroDivisionError: division by zero"},
+        ],
+        "suggested_fix_strategy": "Guard the average against an empty order list once the frame is confirmed.",
+    },
+    "config_env": {
+        "label": "Missing env variable",
+        "description": "A deploy dropped ORDERS_TABLE; every request fails at startup.",
+        "alarm_name": "OpsPilotSampleServiceErrors",
+        "alarm_reason": "100% error rate after deploy",
+        "classification": "config_regression",
+        "confidence": 0.88,
+        "severity": "sev1",
+        "summary": "Configuration regression: ORDERS_TABLE env var missing after the latest deploy; KeyError raised in settings loader.",
+        "suspected_location": None,
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "KeyError: 'ORDERS_TABLE'"},
+            {"kind": "commit", "ref": "a1b2c3d", "claim": "Lambda environment block edited in the last deploy"},
+        ],
+        "suggested_fix_strategy": "Restore ORDERS_TABLE in the Lambda environment and redeploy.",
+    },
+    "payment_timeout": {
+        "label": "Payment gateway timeout",
+        "description": "Downstream payment API stops responding; httpx.ReadTimeout on checkout.",
+        "alarm_name": "OpsPilotSampleServiceLatency",
+        "alarm_reason": "p99 latency above 10s for 3 datapoints",
+        "classification": "dependency",
+        "confidence": 0.86,
+        "severity": "sev2",
+        "summary": "Downstream dependency failure: httpx.ReadTimeout calling the payment gateway on checkout.",
+        "suspected_location": None,
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "httpx.ReadTimeout: The read operation timed out"},
+            {"kind": "metric", "ref": "Latency p99", "claim": "p99 rose from 300ms to 10s"},
+        ],
+        "suggested_fix_strategy": "Check the provider status page; add a circuit breaker and shorter timeout.",
+    },
+    "ddb_throttle": {
+        "label": "DynamoDB throttling",
+        "description": "Order writes hit ProvisionedThroughputExceededException during a traffic spike.",
+        "alarm_name": "OpsPilotSampleServiceErrors",
+        "alarm_reason": "Throttled writes above threshold",
+        "classification": "dependency",
+        "confidence": 0.81,
+        "severity": "sev3",
+        "summary": "DynamoDB ProvisionedThroughputExceededException on orders table writes during traffic spike.",
+        "suspected_location": None,
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "ProvisionedThroughputExceededException"},
+            {"kind": "metric", "ref": "ThrottledRequests", "claim": "Throttled write requests spiked"},
+        ],
+        "suggested_fix_strategy": "Switch the table to on-demand or raise write capacity; add retry with backoff.",
+    },
+    "db_pool": {
+        "label": "Connection pool exhausted",
+        "description": "All database connections are held; new requests time out waiting.",
+        "alarm_name": "OpsPilotSampleServiceErrors",
+        "alarm_reason": "Error rate above 25%",
+        "classification": "resource",
+        "confidence": 0.85,
+        "severity": "sev1",
+        "summary": "Resource exhaustion: database connection pool limit reached (QueuePool limit of size 10 overflow 0).",
+        "suspected_location": None,
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "TimeoutError: QueuePool limit of size 10 overflow 0 reached"},
+            {"kind": "metric", "ref": "DatabaseConnections", "claim": "Connections pinned at the configured maximum"},
+        ],
+        "suggested_fix_strategy": "Find the connection leak; raise pool size or add RDS Proxy as a stopgap.",
+    },
+    "lambda_oom": {
+        "label": "Lambda out of memory",
+        "description": "Invocations exceed the 512 MB limit while exporting a large report.",
+        "alarm_name": "OpsPilotSampleServiceErrors",
+        "alarm_reason": "Runtime.OutOfMemory on 8 invocations",
+        "classification": "resource",
+        "confidence": 0.83,
+        "severity": "sev2",
+        "summary": "Resource exhaustion: Lambda Runtime.OutOfMemory at 512 MB while building the orders export.",
+        "suspected_location": None,
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "Runtime.OutOfMemory: Max Memory Used 512 MB"},
+            {"kind": "metric", "ref": "MaxMemoryUsed", "claim": "Memory used hit the configured limit"},
+        ],
+        "suggested_fix_strategy": "Stream the export instead of loading it in memory, or raise memory size.",
+    },
+    "latency_no_errors": {
+        "label": "Latency spike, no errors",
+        "description": "Latency rises with no errors or stack traces in the logs; the agent abstains.",
+        "alarm_name": "OpsPilotSampleServiceLatency",
+        "alarm_reason": "p95 latency above 2s",
+        "classification": "insufficient_evidence",
+        "confidence": 0.3,
+        "severity": "sev4",
+        "summary": "Insufficient evidence: latency rose but logs contain no errors or stack traces to attribute a cause.",
+        "suspected_location": None,
+        "evidence": [
+            {"kind": "metric", "ref": "Latency p95", "claim": "p95 rose from 180ms to 2.4s"},
+        ],
+        "suggested_fix_strategy": None,
+    },
+}
+
+
+def list_scenarios() -> List[Dict[str, Any]]:
+    """Public catalogue for the UI (no canned RCA payloads)."""
+    return [
+        {
+            "id": sid,
+            "label": s["label"],
+            "description": s["description"],
+            "classification": s["classification"],
+            "severity": s["severity"],
+            "live_probe": bool(s.get("probe_path")),
+            "expected_outcome": expected_status(s),
+        }
+        for sid, s in SCENARIOS.items()
+    ]
+
+
+def simulation_alarm_name(scenario_id: str) -> str:
+    """Alarm identity sent to ingest for a simulated scenario.
+
+    Ingest dedupes on sha256(alarm_name + 15-minute window), and several scenarios share a
+    CloudWatch alarm name. Synthetic scenarios get a per-scenario suffix so two different
+    scenarios in the same window are separate incidents, while repeat runs of the same
+    scenario still dedupe. The live-probe scenario keeps the real alarm name, so it dedupes
+    with the alarm CloudWatch would raise for the same traffic.
+    """
+    sc = SCENARIOS[scenario_id]
+    if sc.get("probe_path"):
+        return sc["alarm_name"]
+    return f"{sc['alarm_name']}-sim-{scenario_id}"
+
+
+def expected_status(s: Dict[str, Any]) -> str:
+    """Mirror opspilot.route.route_rca for the canned RCA."""
+    loc: Optional[Dict[str, Any]] = s.get("suspected_location")
+    if s["classification"] != "code_defect" or s["confidence"] < 0.6 or not loc:
+        return "NOTIFIED"
+    ref = f"{loc['file']}:{loc['line']}"
+    if not any(e["kind"] == "stack_frame" and e["ref"] == ref for e in s["evidence"]):
+        return "NOTIFIED"
+    return "AWAITING_CHOICE"
