@@ -56,16 +56,67 @@ redeploy updates the existing CloudFormation stacks in ${REGION}. It does not de
 EOF
 }
 
-ensure_venv() {
-  [[ -x "$ROOT/.venv/bin/python" ]] || die "missing .venv. From the repo root, without sudo:
-  python3.11 -m venv .venv
+# Prefer the active conda env. Fall back to .venv, then python3 on PATH.
+# `make deploy` already uses PATH python (conda). This must use the same interpreter
+# or the dashboard process exits before it binds port 8000.
+ensure_python() {
+  local py=""
+  if [[ -n "${CONDA_PREFIX:-}" ]]; then
+    if [[ -x "${CONDA_PREFIX}/bin/python" ]]; then
+      py="${CONDA_PREFIX}/bin/python"
+    elif [[ -x "${CONDA_PREFIX}/bin/python3" ]]; then
+      py="${CONDA_PREFIX}/bin/python3"
+    else
+      die "CONDA_PREFIX=${CONDA_PREFIX} has no python. Activate the env that has the dashboard packages:
+  conda activate <env>
+  pip install -r requirements.txt 'botocore[crt]'"
+    fi
+    pass "conda env ${CONDA_DEFAULT_ENV:-$CONDA_PREFIX}"
+  elif [[ -x "$ROOT/.venv/bin/python" ]]; then
+    # shellcheck disable=SC1091
+    source "$ROOT/.venv/bin/activate"
+    py="$ROOT/.venv/bin/python"
+    pass "using .venv"
+  elif command -v python3 >/dev/null 2>&1; then
+    py="$(command -v python3)"
+  elif command -v python >/dev/null 2>&1; then
+    py="$(command -v python)"
+  else
+    die "Python not found. Activate your conda env, or from the repo root:
+  python3 -m venv .venv
   source .venv/bin/activate
   pip install -r requirements.txt 'botocore[crt]'"
-  # shellcheck disable=SC1091
-  source "$ROOT/.venv/bin/activate"
-  export PYTHON="$ROOT/.venv/bin/python"
+  fi
+  if ! "$py" -c 'import fastapi, uvicorn, boto3' >/dev/null 2>&1; then
+    die "Python at $py cannot import fastapi, uvicorn, and boto3.
+  In that environment: pip install -r requirements.txt 'botocore[crt]'"
+  fi
+  export PYTHON="$py"
   export AWS_REGION="$REGION"
   export AWS_DEFAULT_REGION="$REGION"
+  pass "python $PYTHON"
+}
+
+# Background start returns before uvicorn binds. A dead process used to look like
+# "not listening" only later, in status. Fail here and show the log.
+wait_for_port() {
+  local port="$1" pid="$2" log="$3" label="$4"
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if port_listening "$port"; then
+      pass "${label} listening on ${port}"
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "  ${label} exited before it listened on ${port}. Last lines of ${log}:" >&2
+      tail -n 40 "$log" >&2 || true
+      die "${label} is not listening on ${port}"
+    fi
+    sleep 1
+  done
+  echo "  ${label} is still starting. A first frontend build can take a few minutes."
+  echo "  Then: bash scripts/ec2.sh status"
+  echo "  Log: ${log}"
 }
 
 public_ip() {
@@ -166,9 +217,10 @@ start_dashboard() {
   fi
   step "Starting dashboard on 0.0.0.0:${DASH_PORT}"
   nohup bash "$ROOT/scripts/deploy.sh" dashboard >"$DASH_LOG" 2>&1 &
-  pass "pid $! log ${DASH_LOG}"
+  local pid=$!
+  pass "pid ${pid} log ${DASH_LOG}"
+  wait_for_port "$DASH_PORT" "$pid" "$DASH_LOG" "dashboard"
   print_url "$DASH_PORT" "Dashboard"
-  echo "  First start builds the frontend. Wait, then: bash scripts/ec2.sh status"
 }
 
 start_checkpoint1() {
@@ -179,9 +231,10 @@ start_checkpoint1() {
   fi
   step "Starting Checkpoint 1 UI on 0.0.0.0:${CP1_PORT}"
   nohup bash "$ROOT/scripts/deploy.sh" checkpoint1 >"$CP1_LOG" 2>&1 &
-  pass "pid $! log ${CP1_LOG}"
+  local pid=$!
+  pass "pid ${pid} log ${CP1_LOG}"
+  wait_for_port "$CP1_PORT" "$pid" "$CP1_LOG" "checkpoint1"
   print_url "$CP1_PORT" "Checkpoint 1"
-  echo "  First start builds the UI. Wait, then: bash scripts/ec2.sh status"
 }
 
 normalize_target() {
@@ -195,7 +248,7 @@ normalize_target() {
 cmd_startup() {
   local target
   target="$(normalize_target "${1:-all}")"
-  ensure_venv
+  ensure_python
   case "$target" in
     dashboard) start_dashboard ;;
     checkpoint1) start_checkpoint1 ;;
@@ -223,7 +276,7 @@ cmd_restart() {
 }
 
 cmd_redeploy() {
-  ensure_venv
+  ensure_python
   step "git pull --ff-only"
   git pull --ff-only
   step "Updating existing stacks (bash scripts/deploy.sh)"
@@ -233,7 +286,7 @@ cmd_redeploy() {
 }
 
 cmd_fix() {
-  ensure_venv
+  ensure_python
   step "git pull --ff-only"
   git pull --ff-only
   cmd_kill dashboard
@@ -296,7 +349,7 @@ cmd_login() {
 }
 
 cmd_verify() {
-  ensure_venv
+  ensure_python
   bash "$ROOT/scripts/deploy.sh" verify
 }
 
@@ -333,6 +386,11 @@ cmd_open_ports() {
     done
   done <<<"$sgs"
 }
+
+# Sourcing this file (tests) loads functions only.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
 
 cmd="${1:-help}"
 shift || true
