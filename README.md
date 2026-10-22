@@ -28,6 +28,20 @@ bash scripts/deploy.sh                    # preflight -> bootstrap -> synth -> d
 
 See docs/DEMO_RUNBOOK.md for every subcommand and the demo flow.
 
+On the EC2 instance, `scripts/ec2.sh` starts and stops the demo processes. It does not create the stacks; `bash scripts/deploy.sh` does that.
+
+```bash
+bash scripts/ec2.sh startup          # dashboard :8000 and Checkpoint 1 UI :8001
+bash scripts/ec2.sh kill             # stop both
+bash scripts/ec2.sh restart
+bash scripts/ec2.sh redeploy         # git pull, then update the existing stacks
+bash scripts/ec2.sh fix              # git pull, restart the dashboard (Raise PR region)
+bash scripts/ec2.sh status
+bash scripts/ec2.sh logs dashboard
+bash scripts/ec2.sh verify
+bash scripts/ec2.sh open-ports       # inbound TCP 8000 and 8001
+```
+
 ## Repo map
 - docs/ARCHITECTURE.md — components, data flow, decisions and guardrails
 - docs/IMPLEMENTATION_SPEC.md — the build spec: layout, module contracts, acceptance criteria per milestone
