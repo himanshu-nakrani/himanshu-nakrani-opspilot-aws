@@ -108,6 +108,10 @@ TXT
 
 dashboard() {
   step "Dashboard"
+  # The dashboard opens CodeCommit pull requests. boto3 raises "You must specify a region"
+  # when AWS_REGION is unset, even if the CLI login config has one.
+  export AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
+  export AWS_DEFAULT_REGION="$AWS_REGION"
   if [[ ! -f frontend/dist/index.html || "${REBUILD_FRONTEND:-0}" == 1 ]]; then
     (cd frontend && npm ci && npm run build)
   fi

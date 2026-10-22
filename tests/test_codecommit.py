@@ -194,6 +194,24 @@ def test_parse_pr_console_url_round_trip():
     assert parse_pr_console_url("https://codecommit.example/pr/9") == (None, None, None)
 
 
+def test_codecommit_client_uses_default_region_when_env_is_unset(monkeypatch):
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    created = {}
+
+    class _Boto:
+        @staticmethod
+        def client(service, region_name=None):
+            created["service"] = service
+            created["region_name"] = region_name
+            return FakeCodeCommit()
+
+    monkeypatch.setitem(__import__("sys").modules, "boto3", _Boto)
+    client = CodeCommitClient("opspilot-aws")
+    assert created == {"service": "codecommit", "region_name": "us-east-1"}
+    assert client.region == "us-east-1"
+
+
 def test_invalid_repo_name_rejected():
     with pytest.raises(ValueError):
         CodeCommitClient("owner/repo", client=FakeCodeCommit())

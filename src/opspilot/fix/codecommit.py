@@ -117,13 +117,16 @@ class CodeCommitClient:
         if not _REPO_RE.fullmatch(repo):
             raise ValueError(f"Invalid CodeCommit repository name '{repo}'")
         self.repo = repo
+        resolved = (region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1").strip()
         if client is None:
             import boto3  # local import keeps unit tests free of AWS clients
 
-            client = boto3.client("codecommit", region_name=region or os.environ.get("AWS_REGION"))
+            # An explicit region_name=None makes boto3 ignore the shared config and raise
+            # "You must specify a region." Always pass a concrete region.
+            client = boto3.client("codecommit", region_name=resolved)
         self._cc = client
         meta_region = getattr(getattr(client, "meta", None), "region_name", None)
-        self.region = region or meta_region or os.environ.get("AWS_REGION") or "us-east-1"
+        self.region = resolved or meta_region or "us-east-1"
 
     def _call(self, action: str, method: str, **kwargs) -> Dict[str, Any]:
         try:
