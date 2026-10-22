@@ -10,6 +10,7 @@
 #   bash scripts/deploy.sh verify         # post-deploy smoke test (stacks, Lambdas, wiring, alarms, live URL)
 #   bash scripts/deploy.sh outputs        # print stack outputs
 #   bash scripts/deploy.sh dashboard      # build the frontend and run the OpsPilot dashboard locally
+#   bash scripts/deploy.sh checkpoint1    # Checkpoint 1 UI on 0.0.0.0:8001 (EC2 demo, not the full dashboard)
 #   bash scripts/deploy.sh destroy        # tear everything down (asks first unless YES=1)
 #
 # Config comes from the environment or a .env.deploy file at the repo root
@@ -113,6 +114,15 @@ dashboard() {
   exec "$PY" -m uvicorn dashboard.app:dashboard_app --host 0.0.0.0 --port "${PORT:-8000}"
 }
 
+# Hackathon demo: Checkpoint 1 UI, not the repo-root dashboard.
+# Delegates to checkpoint1/start.sh ec2, which listens on 0.0.0.0:8001.
+checkpoint1() {
+  local variant="${1:-ui}"
+  step "Checkpoint 1"
+  [[ -n "${ROOT:-}" && -f "$ROOT/checkpoint1/start.sh" ]] || die "missing checkpoint1/start.sh"
+  exec bash "$ROOT/checkpoint1/start.sh" ec2 "$variant"
+}
+
 destroy() {
   resolve_env
   step "Destroy all OpsPilot stacks in $CDK_DEFAULT_ACCOUNT/$CDK_DEFAULT_REGION"
@@ -162,6 +172,7 @@ case "$cmd" in
   verify)    resolve_env; verify ;;
   outputs)   resolve_env; "$PY" scripts/deploy_check.py outputs ;;
   dashboard) dashboard ;;
+  checkpoint1) checkpoint1 "${2:-ui}" ;;
   destroy)   destroy ;;
   -h|--help|help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$cmd' (try: bash scripts/deploy.sh help)" ;;

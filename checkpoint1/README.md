@@ -13,7 +13,7 @@ Self-contained snapshot. The dashboard you present, the FastAPI app, the agent c
 | `evals/` | M6 fixtures and replay helpers |
 | `requirements.txt` | Python deps (copied from the main app) |
 | `start.sh` | `local` or `ec2` startup |
-| `ssm-tunnel.sh` | Laptop port-forward over Session Manager |
+| `ssm-tunnel.sh` | Optional port-forward. This demo is reached on the instance public IP. |
 
 ## What the UI shows
 
@@ -25,30 +25,31 @@ Checkpoint 1 is the in-progress build: demo incidents, grounded RCA, and milesto
 
 | Mode | Where | Credentials |
 |------|--------|-------------|
-| `local` | Laptop | AWS CLI profile. Copy `.env.deploy.example` to `.env.deploy` in this folder. |
-| `ec2` | SSM shell on the instance | Instance IAM role. Profile and static keys are cleared. |
+| `local` | Laptop | AWS CLI profile. Copy `.env.deploy.example` to `.env.deploy` in this folder. UI on `127.0.0.1:5174`. |
+| `ec2` | Shell on the instance | Checkpoint 1 UI needs none and listens on `0.0.0.0:8001`. `app` uses the AWS credential chain (`aws login` needs `botocore[crt]` in the venv). |
+
+Laptop:
 
 ```bash
 cd checkpoint1
 
 bash start.sh local              # UI → http://127.0.0.1:5174
 bash start.sh local app          # API + built UI → http://127.0.0.1:8000
-
-# On the instance, inside an SSM session:
-bash start.sh ec2                # UI on 127.0.0.1:5174
-bash start.sh ec2 app            # API on 127.0.0.1:8000
 ```
 
-From the laptop, forward that port (AWS CLI + Session Manager plugin, `.env.deploy` in this folder):
+EC2 hackathon demo (Checkpoint 1 UI, not the repo-root dashboard). From the repo root on the instance:
 
 ```bash
-bash ssm-tunnel.sh i-0123456789abcdef0 5174
-bash ssm-tunnel.sh i-0123456789abcdef0 8000
+bash scripts/deploy.sh checkpoint1
+# or
+bash checkpoint1/start.sh ec2
 ```
 
-`app` creates `checkpoint1/.venv` and installs `requirements.txt` if FastAPI, uvicorn, boto3, or strands are not already importable.
+Open `http://<public-ipv4>:8001` in Safari. The script prints that URL when instance metadata returns a public IPv4. Allow inbound TCP 8001 from your IP in the instance security group.
 
-Optional env: `CP1_PORT` (default `5174`), `PORT` (default `8000`), `BIND_HOST` on EC2 (default `127.0.0.1`).
+`app` (`bash checkpoint1/start.sh ec2 app`) creates `checkpoint1/.venv`, installs `requirements.txt`, and installs `botocore[crt]` so boto3 can use `aws login` credentials. UI-only mode does not install that extra. The API listens on `0.0.0.0` and `PORT` (default `8000`).
+
+Optional env: `CP1_PORT` (local default `5174`, EC2 default `8001`), `PORT` (API default `8000`), `BIND_HOST` on EC2 (default `0.0.0.0`).
 
 ## Presenting
 

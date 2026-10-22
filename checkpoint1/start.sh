@@ -2,11 +2,11 @@
 # Start the Checkpoint 1 app. Everything it needs lives in this folder
 # (frontend, dashboard, src, sample_service, evals).
 #
-#   bash start.sh local [ui|app]     # laptop: AWS CLI profile / SSO
-#   bash start.sh ec2 [ui|app]       # EC2 SSM shell: instance IAM role, bind 127.0.0.1
+#   bash start.sh local [ui|app]     # laptop: AWS CLI profile / SSO, UI on 127.0.0.1:5174
+#   bash start.sh ec2 [ui|app]       # EC2: UI on 0.0.0.0:8001 (open the public IP in Safari)
 #
-# Reach an EC2 listener from your laptop:
-#   bash ssm-tunnel.sh <instance-id> <port>
+# From the repo root on EC2:
+#   bash scripts/deploy.sh checkpoint1
 #
 # Variants:
 #   ui    Vite Checkpoint 1 dashboard (demo incidents). Default.
@@ -14,8 +14,8 @@
 #
 # Environment (optional):
 #   PORT          app listen port (default 8000)
-#   CP1_PORT      ui listen port (default 5174)
-#   BIND_HOST     ec2 listen address (default 127.0.0.1)
+#   CP1_PORT      ui listen port (default 5174 local, 8001 on ec2)
+#   BIND_HOST     ec2 listen address (default 0.0.0.0)
 set -euo pipefail
 
 c_blue=$'\033[34m'; c_red=$'\033[31m'; c_grn=$'\033[32m'; c_off=$'\033[0m'
@@ -33,7 +33,12 @@ if [[ "$VARIANT" == "full" || "$VARIANT" == "cp1" ]]; then
   [[ "$VARIANT" == "full" ]] && VARIANT="app"
   [[ "$VARIANT" == "cp1" ]] && VARIANT="ui"
 fi
-CP1_PORT="${CP1_PORT:-5174}"
+# EC2 demo is the Checkpoint 1 UI on 8001. Laptop dev stays on 5174.
+if [[ "$MODE" == "ec2" ]]; then
+  CP1_PORT="${CP1_PORT:-8001}"
+else
+  CP1_PORT="${CP1_PORT:-5174}"
+fi
 APP_PORT="${PORT:-8000}"
 
 usage() {
@@ -41,9 +46,9 @@ usage() {
 Start the Checkpoint 1 app from this folder.
 
   bash start.sh local [ui|app]     # laptop: AWS CLI profile / SSO (.env.deploy)
-  bash start.sh ec2 [ui|app]       # EC2 via SSM: instance role, 127.0.0.1
+  bash start.sh ec2 [ui|app]       # EC2: UI on 0.0.0.0:8001
 
-  bash ssm-tunnel.sh <instance-id> [remote-port] [local-port]
+  bash scripts/deploy.sh checkpoint1   # same EC2 UI, from the repo root
 
 Variants:
   ui    Vite dashboard with demo incidents (default)
@@ -51,6 +56,8 @@ Variants:
 
 Environment:
   PORT, CP1_PORT, BIND_HOST
+  CP1_PORT defaults to 5174 on local and 8001 on ec2.
+  BIND_HOST defaults to 0.0.0.0 on ec2.
 EOF
 }
 
@@ -104,6 +111,8 @@ load_env_local() {
 }
 
 load_env_ec2() {
+  # Drop env keys and AWS_PROFILE so boto3/CLI use aws login, or an instance
+  # role when one is attached. App mode installs botocore[crt] for aws login.
   unset AWS_PROFILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
   if [[ -f "$APP_DIR/.env.deploy" ]]; then
     local line
@@ -114,7 +123,7 @@ load_env_ec2() {
   fi
   export AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
   export AWS_DEFAULT_REGION="$AWS_REGION"
-  pass "Using instance credentials (profile unset)"
+  pass "AWS credential chain: aws login or instance role (profile unset)"
 }
 
 ensure_python_app() {
@@ -128,10 +137,45 @@ ensure_python_app() {
     command -v "$PY" >/dev/null || die "python3 not found"
     local base="${PYTHON:-python3}"
     "$base" -m venv "$APP_DIR/.venv"
-    "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt"
+    "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt" 'botocore[crt]'
     PY="$APP_DIR/.venv/bin/python"
   fi
+  # aws login credentials are invisible to boto3 until the crt extra is installed.
+  # UI mode never calls this function.
+  if ! "$PY" -c 'import awscrt' >/dev/null 2>&1; then
+    step "Installing botocore[crt] so aws login credentials work with boto3"
+    "$PY" -m pip install 'botocore[crt]'
+  fi
+  "$PY" -c 'import awscrt' >/dev/null 2>&1 \
+    || die "botocore[crt] is required so boto3 can use aws login credentials"
   pass "$("$PY" --version) (PYTHONPATH includes this folder)"
+}
+
+# Print the URL to open just before the process is replaced by the server.
+announce_ec2_url() {
+  local host="$1"
+  local port="$2"
+  local public_ip="" token=""
+  if command -v curl >/dev/null 2>&1; then
+    token="$(curl -fsS -m 2 -X PUT "http://169.254.169.254/latest/api/token" \
+      -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true)"
+    token="${token//$'\r'/}"
+    token="${token//$'\n'/}"
+    if [[ -n "$token" ]]; then
+      public_ip="$(curl -fsS -m 2 \
+        -H "X-aws-ec2-metadata-token: $token" \
+        "http://169.254.169.254/latest/meta-data/public-ipv4" 2>/dev/null || true)"
+    fi
+  fi
+  public_ip="${public_ip//$'\r'/}"
+  public_ip="${public_ip//$'\n'/}"
+  echo
+  if [[ "$public_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    echo "  ${c_grn}Open in Safari:${c_off} http://${public_ip}:${port}"
+  else
+    echo "  Public IPv4 lookup failed. Listening on ${host}:${port}"
+  fi
+  echo "  Allow inbound TCP ${port} from your IP in the instance security group."
 }
 
 start_ui_dev() {
@@ -150,7 +194,10 @@ start_ui_preview() {
   cd "$APP_DIR/frontend"
   npm install
   npm run build
-  exec npm run preview -- --host "$host" --port "$CP1_PORT"
+  if [[ "$MODE" == "ec2" ]]; then
+    announce_ec2_url "$host" "$CP1_PORT"
+  fi
+  exec npm run preview -- --host "$host" --port "$CP1_PORT" --strictPort
 }
 
 start_app() {
@@ -162,6 +209,9 @@ start_app() {
     (cd "$APP_DIR/frontend" && npm install && npm run build)
   fi
   cd "$APP_DIR"
+  if [[ "$MODE" == "ec2" ]]; then
+    announce_ec2_url "$host" "$APP_PORT"
+  fi
   exec "$PY" -m uvicorn dashboard.app:dashboard_app --host "$host" --port "$APP_PORT"
 }
 
@@ -178,16 +228,20 @@ case "$MODE" in
     esac
     ;;
   ec2)
-    EC2_HOST="${BIND_HOST:-127.0.0.1}"
-    step "EC2 startup (instance IAM role, bind ${EC2_HOST})"
-    echo "  From your laptop: bash ssm-tunnel.sh <instance-id> <port>"
-    load_env_ec2
-    ensure_aws_cli
-    aws_identity
+    EC2_HOST="${BIND_HOST:-0.0.0.0}"
+    step "EC2 startup (Checkpoint 1, bind ${EC2_HOST})"
     case "$VARIANT" in
-      ui)  start_ui_preview "$EC2_HOST" ;;
-      app) start_app "$EC2_HOST" ;;
-      *)   die "unknown variant '$VARIANT' (use ui or app)" ;;
+      ui)
+        echo "  Checkpoint 1 UI does not need AWS credentials."
+        start_ui_preview "$EC2_HOST"
+        ;;
+      app)
+        load_env_ec2
+        ensure_aws_cli
+        aws_identity
+        start_app "$EC2_HOST"
+        ;;
+      *) die "unknown variant '$VARIANT' (use ui or app)" ;;
     esac
     ;;
   -h|--help|help|"")
