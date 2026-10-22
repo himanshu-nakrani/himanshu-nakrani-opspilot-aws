@@ -114,6 +114,12 @@ dashboard() {
   # when AWS_REGION is unset, even if the CLI login config has one.
   export AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
   export AWS_DEFAULT_REGION="$AWS_REGION"
+  # aws login stores a CLI session. boto3 only sees it after the keys are exported.
+  if [[ -z "${AWS_ACCESS_KEY_ID:-}" ]] && command -v aws >/dev/null 2>&1; then
+    if creds="$(aws configure export-credentials --format env 2>/dev/null)"; then
+      eval "$creds"
+    fi
+  fi
   if [[ ! -f frontend/dist/index.html || "${REBUILD_FRONTEND:-0}" == 1 ]]; then
     (cd frontend && npm ci && npm run build)
   fi

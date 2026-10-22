@@ -44,6 +44,7 @@ def setup_dashboard(monkeypatch):
     seed_cache_from_fixtures()
     import dashboard.app as app_mod
 
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
     monkeypatch.setattr(app_mod, "get_codebuild_client", lambda: _NoLiveAws())
     monkeypatch.setattr(app_mod, "get_pipeline_client", lambda: _NoLiveAws())
     monkeypatch.setattr(app_mod, "begin_pr_verification", _begin_without_aws)
@@ -103,6 +104,76 @@ def test_dashboard_home_html():
     assert "OpsPilot" in response.text
     assert "Autonomous SRE Pipeline Architecture" in response.text
     assert "Grounded Evidence Breakdown" in response.text
+
+
+def test_live_dynamodb_incident_is_listed(monkeypatch):
+    import json
+
+    import dashboard.app as app_mod
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+
+    class _Table:
+        def scan(self, **kwargs):
+            return {
+                "Items": [
+                    {
+                        "incident_id": {"S": "live-orders-999"},
+                        "service": {"S": "sample-service"},
+                        "detected_at": {"S": "2099-10-22T21:11:27+00:00"},
+                        "status": {"S": "RECORDED"},
+                        "classification": {"S": "insufficient_evidence"},
+                        "confidence": {"N": "0"},
+                        "alarm_name": {"S": "OpsPilotSampleServiceErrors"},
+                        "rca_result": {
+                            "S": json.dumps(
+                                {
+                                    "summary": "Insufficient evidence: RCA agent failed (ValidationException)",
+                                    "classification": "insufficient_evidence",
+                                    "confidence": 0,
+                                    "severity": "sev3",
+                                }
+                            )
+                        },
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(app_mod.boto3, "client", lambda *args, **kwargs: _Table())
+    rows = client.get("/api/incidents").json()
+    assert rows[0]["incident_id"] == "live-orders-999"
+    assert rows[0]["source"] == "dynamodb"
+    assert rows[0]["alarm_name"] == "OpsPilotSampleServiceErrors"
+
+
+def test_instance_role_reads_dynamodb_without_an_access_key(monkeypatch):
+    import dashboard.app as app_mod
+
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+
+    class _Session:
+        def get_credentials(self):
+            return object()
+
+    class _Table:
+        def scan(self, **kwargs):
+            return {
+                "Items": [
+                    {
+                        "incident_id": {"S": "role-incident"},
+                        "service": {"S": "sample-service"},
+                        "detected_at": {"S": "2099-01-01T00:00:00+00:00"},
+                        "classification": {"S": "code_defect"},
+                        "confidence": {"N": "0.9"},
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(app_mod.boto3, "Session", lambda: _Session())
+    monkeypatch.setattr(app_mod.boto3, "client", lambda *args, **kwargs: _Table())
+    rows = client.get("/api/incidents").json()
+    assert rows[0]["incident_id"] == "role-incident"
 
 
 def test_get_incidents_api():

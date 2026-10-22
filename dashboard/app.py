@@ -304,6 +304,23 @@ def get_dashboard_html():
     return HTMLResponse("<h1>OpsPilot Dashboard Template Not Found</h1>", status_code=404)
 
 
+def _dynamodb_credentials_available() -> bool:
+    """True when this process can read the live incidents table.
+
+    `aws login` and an EC2 instance role do not set AWS_ACCESS_KEY_ID. The testing
+    key is the offline switch used by unit tests.
+    """
+    key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    if key == "testing":
+        return False
+    if key:
+        return True
+    try:
+        return boto3.Session().get_credentials() is not None
+    except Exception:
+        return False
+
+
 @dashboard_app.get("/api/incidents")
 def list_incidents() -> List[Dict[str, Any]]:
     """List all incidents from DynamoDB or in-memory fallback cache."""
@@ -311,13 +328,14 @@ def list_incidents() -> List[Dict[str, Any]]:
     items = []
 
     # Attempt to read from DynamoDB if AWS credentials are active
-    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_ACCESS_KEY_ID") != "testing":
+    if _dynamodb_credentials_available():
         try:
             dynamodb = boto3.client("dynamodb")
             resp = dynamodb.scan(TableName=table_name, Limit=50)
             for raw in resp.get("Items", []):
                 item = {
                     "incident_id": raw.get("incident_id", {}).get("S"),
+                    "alarm_name": raw.get("alarm_name", {}).get("S"),
                     "service": raw.get("service", {}).get("S", "sample-service"),
                     "detected_at": raw.get("detected_at", {}).get("S"),
                     "status": raw.get("status", {}).get("S", "RECORDED"),
