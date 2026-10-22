@@ -106,6 +106,41 @@ def test_dashboard_home_html():
     assert "Grounded Evidence Breakdown" in response.text
 
 
+def test_fixture_replay_stays_offline_when_aws_keys_are_set(monkeypatch):
+    """Startup must not call Bedrock for the built-in samples just because DynamoDB keys exist."""
+    import json
+    from pathlib import Path
+
+    import dashboard.app as app_mod
+    from opspilot.agentcore import runtime as runtime_mod
+    from opspilot.contracts import ContextBundle
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATESTLIVE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "token")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+
+    seen = []
+    real = runtime_mod.BedrockModel
+
+    def recording_bedrock(*args, **kwargs):
+        model_id = kwargs.get("model_id", "")
+        seen.append(model_id)
+        assert "kimi" not in model_id
+        assert "moonshot" not in model_id
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(runtime_mod, "BedrockModel", recording_bedrock)
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[1] / "evals" / "fixtures" / "01_sample_missing_order.json").read_text()
+    )
+    rca, session = app_mod._run_rca_with_trace(ContextBundle.model_validate(fixture["context_bundle"]))
+    assert rca.classification == "code_defect"
+    assert session is not None
+    assert seen
+    assert all("kimi" not in model_id and "moonshot" not in model_id for model_id in seen)
+
+
 def test_live_dynamodb_incident_is_listed(monkeypatch):
     import json
 

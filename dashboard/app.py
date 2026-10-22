@@ -39,8 +39,8 @@ from opspilot.knowledge.document import public_knowledge
 from opspilot.knowledge.ingest import sync_merged_solution
 from opspilot.verify.pr_check import BUILD_NOT_STARTED, begin_pr_verification, public_test, refresh_verification
 from opspilot.ingest import handle_alarm_event
-from opspilot.rca.agent import run_rca_agent
-from opspilot.agentcore.runtime import AgentCoreRuntime
+from opspilot.rca.agent import analyze_heuristically, run_rca_agent
+from opspilot.agentcore.runtime import AgentCoreOfflineModel, AgentCoreRuntime
 from dashboard.runs import build_agent_run, summarize as summarize_run
 from opspilot.route import route_rca
 from opspilot.ticketing import list_opscenter_tickets
@@ -117,19 +117,21 @@ AGENT_RUNS: Dict[str, Dict[str, Any]] = {}
 
 
 def _run_rca_with_trace(bundle: ContextBundle):
-    """Run the RCA agent and keep its AgentCore session so the dashboard can show the trace.
+    """Replay one recorded fixture on the offline model and keep its trace.
 
-    Uses the same Strands/AgentCore path as run_rca_agent; with OPSPILOT_AGENT_BACKEND=converse
-    (or if the runtime cannot start) it falls back to run_rca_agent and records no trace.
+    These rows are the built-in samples. Live incidents are already analyzed by
+    RunRCA and read from DynamoDB. Credentials on this process are for that
+    read, so startup must not call Bedrock once per fixture.
     """
-    if os.environ.get("OPSPILOT_AGENT_BACKEND", "").lower() == "converse":
-        return run_rca_agent(bundle), None
     try:
-        rca, session = AgentCoreRuntime().execute_rca(bundle)
+        rca, session = AgentCoreRuntime().execute_rca(
+            bundle,
+            bedrock_client=AgentCoreOfflineModel(bundle=bundle),
+        )
         return rca, session.to_dict()
     except Exception as e:
-        logger.warning("AgentCore run failed for %s, falling back without a trace: %s", bundle.incident_id, e)
-        return run_rca_agent(bundle), None
+        logger.warning("Offline fixture replay failed for %s: %s", bundle.incident_id, e)
+        return analyze_heuristically(bundle), None
 # Cap the demo cache so repeated simulations cannot grow memory without bound
 LOCAL_INCIDENTS_CACHE_MAX = 200
 
