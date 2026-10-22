@@ -57,7 +57,7 @@ class PipelineStack(Stack):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID", "us.moonshotai.kimi-k3")
+        bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID", "global.anthropic.claude-haiku-5-5")
         # Fix pull requests and verification run against the storefront repo, which is
         # what CodePipeline deploys. The platform repo in CoreStack is separate.
         source_repo = sample_service_stack.app_repo

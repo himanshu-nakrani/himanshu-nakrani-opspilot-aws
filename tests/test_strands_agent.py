@@ -111,6 +111,7 @@ def test_kimi_omits_temperature_and_other_models_keep_it():
 
     assert kimi_model("us.moonshotai.kimi-k3")
     assert bedrock_sampling("us.moonshotai.kimi-k3") == {}
+    assert bedrock_sampling("global.anthropic.claude-haiku-5-5") == {}
     assert bedrock_sampling("us.anthropic.claude-haiku-4-5-20251001-v1:0") == {"temperature": 0.0}
 
 

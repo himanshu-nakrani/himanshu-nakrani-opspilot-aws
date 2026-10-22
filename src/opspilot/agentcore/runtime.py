@@ -36,9 +36,17 @@ def kimi_model(model_id: str) -> bool:
     return "kimi" in lowered or "moonshot" in lowered
 
 
-def bedrock_sampling(model_id: str) -> Dict[str, float]:
-    """Sampling fields this model accepts. Kimi K3 rejects temperature entirely."""
+def omits_temperature(model_id: str) -> bool:
+    """Models whose Converse API rejects a temperature field."""
     if kimi_model(model_id):
+        return True
+    lowered = (model_id or "").lower()
+    return "claude-haiku-5-5" in lowered or "claude-haiku-5.5" in lowered
+
+
+def bedrock_sampling(model_id: str) -> Dict[str, float]:
+    """Sampling fields this model accepts. Kimi K3 and Claude Haiku 5.5 reject temperature."""
+    if omits_temperature(model_id):
         return {}
     return {"temperature": 0.0}
 

@@ -24,7 +24,7 @@ from opspilot.rca.tools import (
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-DEFAULT_MODEL_ID = "us.moonshotai.kimi-k3"
+DEFAULT_MODEL_ID = "global.anthropic.claude-haiku-5-5"
 
 
 def resolve_model_id(model_id: Optional[str] = None) -> str:
