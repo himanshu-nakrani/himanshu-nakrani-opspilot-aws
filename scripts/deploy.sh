@@ -160,7 +160,7 @@ export JSII_RUNTIME_PACKAGE_CACHE_ROOT="${JSII_RUNTIME_PACKAGE_CACHE_ROOT:-/tmp/
 # Source control is AWS CodeCommit (IAM auth, no tokens). CoreStack owns the repo.
 # An unset CODECOMMIT_REPO_EXISTS becomes 0. Export 1 before running this script to import instead.
 export CODECOMMIT_REPO="${CODECOMMIT_REPO:-opspilot-aws}"
-export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-us.anthropic.claude-haiku-5-5}"
+export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-us.anthropic.claude-haiku-4-5-20251001-v1:0}"
 OUTPUTS_FILE="$ROOT/cdk-outputs.json"
 
 apply_codecommit_repo_exists_default

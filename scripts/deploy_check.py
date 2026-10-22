@@ -32,7 +32,7 @@ ALARMS = ["OpsPilotSampleServiceErrors", "OpsPilotSampleService-CheckoutErrors",
           "OpsPilotSampleService-InventoryDbTimeouts", "OpsPilotSampleService-LatencyP95",
           "OpsPilotSampleService-Crashes", "opspilot-executions-failed"]
 OK_STATES = {"CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"}
-DEFAULT_MODEL = "us.anthropic.claude-haiku-5-5"
+DEFAULT_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 GREEN, RED, YELLOW, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
 failures: list[str] = []
