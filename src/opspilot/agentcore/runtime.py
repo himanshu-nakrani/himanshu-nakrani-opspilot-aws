@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import boto3
 from strands import Agent
+from strands.hooks import BeforeModelCallEvent, HookProvider, HookRegistry
 from strands.models import Model
 from strands.models.bedrock import BedrockModel
 
@@ -27,6 +28,40 @@ from opspilot.rca.prompts import SYSTEM_PROMPT, build_user_prompt
 logger = logging.getLogger(__name__)
 
 AGENTCORE_SYSTEM_PROMPT = SYSTEM_PROMPT  # single shared prompt (opspilot.rca.prompts)
+
+
+def kimi_model(model_id: str) -> bool:
+    """Kimi K3 locks sampling and rejects a temperature field on Converse."""
+    lowered = (model_id or "").lower()
+    return "kimi" in lowered or "moonshot" in lowered
+
+
+def bedrock_sampling(model_id: str) -> Dict[str, float]:
+    """Sampling fields this model accepts. Kimi K3 rejects temperature entirely."""
+    if kimi_model(model_id):
+        return {}
+    return {"temperature": 0.0}
+
+
+def drop_prior_reasoning(messages: List[Dict[str, Any]]) -> None:
+    """Remove reasoning blocks Kimi K3's Converse API will not accept on later turns."""
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        kept = [block for block in content if not (isinstance(block, dict) and "reasoningContent" in block)]
+        if len(kept) != len(content):
+            message["content"] = kept or [{"text": "(reasoning omitted)"}]
+
+
+class _DropKimiReasoning(HookProvider):
+    """Strands replays reasoningContent. Kimi K3's Converse call fails when it does."""
+
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        registry.add_callback(BeforeModelCallEvent, self._strip)
+
+    def _strip(self, event: BeforeModelCallEvent) -> None:
+        drop_prior_reasoning(event.agent.messages)
 
 
 def _capture_metrics(session: "AgentCoreSession", agent: Any) -> None:
@@ -296,7 +331,7 @@ class AgentCoreRuntime:
             model = BedrockModel(
                 model_id=chosen_model_id,
                 boto_session=boto3.Session(region_name=self.region_name),
-                temperature=0.0,
+                **bedrock_sampling(chosen_model_id),
             )
         else:
             model = AgentCoreOfflineModel(bundle=bundle)
@@ -307,6 +342,7 @@ class AgentCoreRuntime:
             system_prompt=sys_prompt,
             name=f"OpsPilot-RCA-{bundle.incident_id}",
             description="Autonomous SRE RCA Agent powered by AWS Strands and Amazon Bedrock AgentCore",
+            hooks=[_DropKimiReasoning()] if kimi_model(chosen_model_id) else [],
         )
         return agent
 
@@ -341,7 +377,8 @@ class AgentCoreRuntime:
             session.error = f"{type(e).__name__}: {e}"
             _capture_metrics(session, agent)
             logger.error("Agent execution error for %s: %s", bundle.incident_id, e)
-            rca_result = abstain(bundle, f"RCA agent failed ({type(e).__name__}); no analysis was produced.")
+            detail = " ".join(str(e).split())[:300]
+            rca_result = abstain(bundle, f"RCA agent failed ({type(e).__name__}: {detail}); no analysis was produced.")
             self.emit_cloudwatch_metrics(session, rca_result)
             return rca_result, session
 

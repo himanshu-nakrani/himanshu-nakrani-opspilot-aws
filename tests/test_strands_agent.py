@@ -104,3 +104,31 @@ def test_run_strands_rca_end_to_end():
             assert ev.ref in valid_log_ids or any(ev.ref in l.message for l in bundle.log_lines)
         elif ev.kind == "stack_frame":
             assert "sample_service/app.py" in ev.ref
+
+
+def test_kimi_omits_temperature_and_other_models_keep_it():
+    from opspilot.agentcore.runtime import bedrock_sampling, kimi_model
+
+    assert kimi_model("us.moonshotai.kimi-k3")
+    assert bedrock_sampling("us.moonshotai.kimi-k3") == {}
+    assert bedrock_sampling("us.anthropic.claude-haiku-4-5-20251001-v1:0") == {"temperature": 0.0}
+
+
+def test_prior_kimi_reasoning_is_removed_before_the_next_turn():
+    from opspilot.agentcore.runtime import drop_prior_reasoning
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"text": "think"}}},
+                {"text": "the crash is in get_order"},
+            ],
+        }
+    ]
+    drop_prior_reasoning(messages)
+    assert messages[0]["content"] == [{"text": "the crash is in get_order"}]
+
+    only_reasoning = [{"role": "assistant", "content": [{"reasoningContent": {"reasoningText": {"text": "think"}}}]}]
+    drop_prior_reasoning(only_reasoning)
+    assert only_reasoning[0]["content"] == [{"text": "(reasoning omitted)"}]
