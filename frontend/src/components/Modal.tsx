@@ -19,6 +19,16 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), textarea, input:not([disabled]), select, [tabindex]:not([tabindex="-1"])';
 
 /**
+ * Elements Tab can actually reach. FOCUSABLE also matches natively focusable
+ * controls that opted out with tabIndex={-1} (e.g. roving-tabindex trace spans);
+ * those must not be chosen as the trap's first/last stop or Tab escapes the panel.
+ */
+export const tabbableIn = (root: HTMLElement): HTMLElement[] =>
+  Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => el.tabIndex >= 0 && (el.offsetParent !== null || el === document.activeElement)
+  );
+
+/**
  * Accessible overlay shared by every dialog and drawer:
  * role="dialog" + aria-modal + aria-labelledby, Esc and backdrop close,
  * focus trap, focus restore and body scroll lock.
@@ -48,7 +58,7 @@ export const Modal: React.FC<ModalProps> = ({
     document.body.style.overflow = 'hidden';
 
     const panel = panelRef.current;
-    const first = panel?.querySelector<HTMLElement>(FOCUSABLE);
+    const first = panel ? tabbableIn(panel)[0] : undefined;
     (first ?? panel)?.focus();
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -58,9 +68,7 @@ export const Modal: React.FC<ModalProps> = ({
         return;
       }
       if (e.key !== 'Tab' || !panel) return;
-      const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-        (el) => el.offsetParent !== null || el === document.activeElement
-      );
+      const items = tabbableIn(panel);
       if (items.length === 0) {
         e.preventDefault();
         panel.focus();
@@ -114,7 +122,7 @@ export const Modal: React.FC<ModalProps> = ({
           <div className="flex items-start gap-2.5 min-w-0">
             {icon}
             <div className="min-w-0">
-              <h2 id={titleId} className="text-[15px] font-semibold tracking-[-0.015em] text-ink-50">
+              <h2 id={titleId} className="text-base font-semibold tracking-[-0.02em] text-ink-50">
                 {title}
               </h2>
               {description && (

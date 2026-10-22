@@ -33,6 +33,10 @@ function usePage(): [string, (path: string) => void] {
 export const App: React.FC = () => {
   const [path, navigate] = usePage();
   const page = path === '/tickets' ? 'tickets' : 'incidents';
+
+  useEffect(() => {
+    document.title = page === 'tickets' ? 'Tickets · OpsPilot' : 'Incidents · OpsPilot';
+  }, [page]);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [filterClass, setFilterClass] = useState<string>('all');

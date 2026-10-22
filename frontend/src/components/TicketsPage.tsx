@@ -3,7 +3,7 @@ import { ExternalLink, Search } from 'lucide-react';
 import { fetchTickets, errorMessage, isAbortError } from '../api';
 import { classificationBadge, opsSeverity, severityBadge, ticketStatusBadge } from '../lib/badges';
 import { formatRelative, formatTimestamp, humanize } from '../lib/format';
-import { focusRing } from '../ui/styles';
+import { badge, btn, eyebrow, focusRing } from '../ui/styles';
 import { Ticket, TicketList, TicketView } from '../types';
 
 interface TicketsPageProps {
@@ -56,7 +56,7 @@ export const TicketsPage: React.FC<TicketsPageProps> = ({ onOpenIncident }) => {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 id="tickets-heading" tabIndex={-1} className="text-[15px] font-semibold tracking-[-0.015em] text-ink-50 focus:outline-none">
-            Open tickets
+            Tickets
           </h2>
           <p className="mt-1 text-xs text-ink-400 max-w-xl">
             Systems Manager OpsCenter is the ticket. A live alarm files one OpsItem. The dashboard simulation only stores a label until that happens.
@@ -96,12 +96,12 @@ export const TicketsPage: React.FC<TicketsPageProps> = ({ onOpenIncident }) => {
       </div>
 
       {data?.opscenter_error && (
-        <p role="status" className="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded-lg p-3">
+        <p role="status" className="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded-md px-3 py-2">
           OpsCenter could not be listed. Ticket labels already on incidents are still shown. {data.opscenter_error}
         </p>
       )}
       {error && (
-        <p role="alert" className="text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+        <p role="alert" className="text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
           {error}
         </p>
       )}
@@ -133,7 +133,8 @@ const TicketSection: React.FC<{
 }> = ({ title, hint, empty, tickets, onOpenIncident }) => (
   <div className="rounded-lg border border-ink-800 bg-ink-900/60">
     <div className="px-4 py-3 border-b border-ink-800">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-300">{title}</h3>
+      <h3 className={eyebrow}>{title}</h3>
+      
       {hint && <p className="mt-1 text-xs text-ink-500">{hint}</p>}
     </div>
     {tickets.length === 0 ? (
@@ -157,18 +158,18 @@ const TicketRow: React.FC<{ ticket: Ticket; onOpenIncident: (incidentId: string)
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xs text-ink-100">{ticket.key}</span>
-          <span className={`px-2 py-0.5 text-xs rounded-md border inline-flex items-center gap-1 ${status.className}`}>
+          <span className={`${badge} ${status.className}`}>
             <StatusIcon className="w-3.5 h-3.5" aria-hidden="true" />
             {status.label}
           </span>
-          {sev && <span className={`px-2 py-0.5 text-xs rounded-md border uppercase ${severityBadge(sev)}`}>{sev}</span>}
+          {sev && <span className={`${badge} uppercase ${severityBadge(sev)}`}>{sev}</span>}
           {ticket.classification && (
-            <span className={`px-2 py-0.5 text-xs rounded-md border ${classificationBadge(ticket.classification)}`}>
+            <span className={`${badge} ${classificationBadge(ticket.classification)}`}>
               {humanize(ticket.classification)}
             </span>
           )}
         </div>
-        <p className="text-sm text-ink-200 leading-snug">{ticket.title}</p>
+        <p className="text-[13px] text-ink-100 leading-snug">{ticket.title}</p>
         <p className="text-2xs text-ink-500 font-mono">
           {ticket.created_at ? formatTimestamp(ticket.created_at) : 'Unknown time'}
           {ticket.created_at ? ` · ${formatRelative(ticket.created_at)}` : ''}
@@ -180,7 +181,7 @@ const TicketRow: React.FC<{ ticket: Ticket; onOpenIncident: (incidentId: string)
           <button
             type="button"
             onClick={() => onOpenIncident(ticket.incident_id as string)}
-            className={`h-7 px-2 text-xs rounded-md border border-ink-700 text-ink-200 hover:bg-ink-800 ${focusRing}`}
+            className={btn.secondary}
           >
             Incident
           </button>
@@ -190,7 +191,7 @@ const TicketRow: React.FC<{ ticket: Ticket; onOpenIncident: (incidentId: string)
             href={ticket.url}
             target="_blank"
             rel="noopener noreferrer"
-            className={`h-7 px-2 inline-flex items-center gap-1 text-xs rounded-md border border-ink-700 text-ink-200 hover:bg-ink-800 ${focusRing}`}
+            className={btn.secondary}
           >
             OpsCenter
             <ExternalLink className="w-3 h-3" aria-hidden="true" />

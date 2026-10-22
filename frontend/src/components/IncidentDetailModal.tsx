@@ -4,7 +4,7 @@ import { Incident, PrStatus } from '../types';
 import { ApiError, chooseFix, errorMessage, fetchIncident, fetchPrStatus, isAbortError } from '../api';
 import { classificationBadge, confidenceTone, severityBadge, SOURCE_LABEL, statusBadge } from '../lib/badges';
 import { formatTimestamp, humanize } from '../lib/format';
-import { focusRing } from '../ui/styles';
+import { badge, btn, eyebrow, focusRing } from '../ui/styles';
 import { Modal } from './Modal';
 import { AgentTrace } from './AgentTrace';
 
@@ -14,10 +14,10 @@ interface IncidentDetailModalProps {
   onUpdated?: (incident: Incident) => void;
 }
 
-const sectionTitle = 'text-xs font-semibold uppercase tracking-wider text-ink-300 mb-2';
+const sectionTitle = `${eyebrow} mb-2 flex items-center gap-1.5`;
 
-const quietButton = `inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-ink-600 text-ink-100 hover:bg-ink-800 disabled:opacity-60 ${focusRing}`;
-const signalButton = `inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-signal-500/15 hover:bg-signal-500/25 text-signal-200 border border-signal-500/40 disabled:opacity-60 ${focusRing}`;
+const quietButton = btn.secondary;
+const signalButton = btn.accent;
 
 /** An http(s) link is a pull request. A branch name such as opspilot/OPS-342 is not. */
 export function pullRequestUrl(prUrl: string | null | undefined): string | null {
@@ -116,7 +116,7 @@ function diffLineClass(line: string): string {
   if (line.startsWith('+++') || line.startsWith('---')) return 'text-ink-300 font-semibold';
   if (line.startsWith('+')) return 'text-ok-300 bg-ok-500/10';
   if (line.startsWith('-')) return 'text-red-300 bg-red-500/10';
-  if (line.startsWith('@@')) return 'text-sky-300';
+  if (line.startsWith('@@')) return 'text-signal-300';
   return 'text-ink-300';
 }
 
@@ -304,21 +304,21 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
       }
     >
       {refreshError && (
-        <p role="status" className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2">
+        <p role="status" className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
           Could not load the latest version of this incident; showing cached data. {refreshError}
         </p>
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className={`px-2 py-0.5 text-xs rounded-md border ${classificationBadge(incident.classification)}`}>
+        <span className={`${badge} ${classificationBadge(incident.classification)}`}>
           {humanize(incident.classification)}
         </span>
-        <span className={`px-2 py-0.5 text-xs rounded-md border flex items-center gap-1 ${status.className}`}>
+        <span className={`${badge} ${status.className}`}>
           <StatusIcon className="w-3.5 h-3.5" aria-hidden="true" />
           {status.label}
         </span>
         {incident.severity && (
-          <span className={`px-2 py-0.5 text-xs rounded-md border uppercase ${severityBadge(incident.severity)}`}>
+          <span className={`${badge} uppercase ${severityBadge(incident.severity)}`}>
             {incident.severity}
           </span>
         )}
@@ -333,7 +333,7 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
       <div className="grid md:grid-cols-2 gap-4">
         <section className="p-4 rounded-lg bg-ink-950/50 border border-ink-800">
           <h3 className={sectionTitle}>
-            <FileCode className="inline w-3.5 h-3.5 mr-1" aria-hidden="true" />
+            <FileCode className="w-3.5 h-3.5" aria-hidden="true" />
             Suspected location
           </h3>
           {loc ? (
@@ -353,7 +353,7 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
 
       <section>
         <h3 className={sectionTitle}>
-          <ListChecks className="inline w-3.5 h-3.5 mr-1" aria-hidden="true" />
+          <ListChecks className="w-3.5 h-3.5" aria-hidden="true" />
           Evidence cited ({evidence.length})
         </h3>
         {evidence.length > 0 ? (
@@ -420,7 +420,7 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
             )}
           </div>
           {choiceError && (
-            <p role="alert" className="mt-3 text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-lg p-2">
+            <p role="alert" className="mt-3 text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
               {choiceError}
             </p>
           )}
@@ -456,7 +456,7 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
             )}
           </div>
           {prStatus?.error && (
-            <p role="status" className="mt-3 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2">
+            <p role="status" className="mt-3 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
               {prStatusNotice(prStatus.status)}
             </p>
           )}
@@ -483,7 +483,7 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
                 <pre className="mt-2 max-h-32 overflow-auto text-xs font-mono text-ink-300 whitespace-pre-wrap">{incident.test_log}</pre>
               )}
               {incident.test_error && (
-                <p role="status" className="mt-2 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2">
+                <p role="status" className="mt-2 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
                   {incident.test_error}
                 </p>
               )}
@@ -500,7 +500,7 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
               )}
               {incident.deploy_summary && <p className="mt-2 text-xs text-ink-200">{incident.deploy_summary}</p>}
               {incident.deploy_error && (
-                <p role="status" className="mt-2 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2">
+                <p role="status" className="mt-2 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
                   {incident.deploy_error}
                 </p>
               )}
@@ -547,17 +547,17 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({ incide
             )}
           </div>
           {copied && (
-            <p role="status" className="mt-3 text-xs text-ok-300 bg-ok-500/10 border border-ok-500/30 rounded-lg p-2">
+            <p role="status" className="mt-3 text-xs text-ok-300 bg-ok-500/10 border border-ok-500/30 rounded-md px-3 py-2">
               Diff copied.
             </p>
           )}
           {copyError && (
-            <p role="alert" className="mt-3 text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-lg p-2">
+            <p role="alert" className="mt-3 text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
               {copyError}
             </p>
           )}
           {choiceError && (
-            <p role="alert" className="mt-3 text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-lg p-2">
+            <p role="alert" className="mt-3 text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
               {choiceError}
             </p>
           )}
