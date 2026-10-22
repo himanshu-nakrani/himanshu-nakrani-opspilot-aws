@@ -8,6 +8,7 @@
 #   bash scripts/ec2.sh fix               # git pull, restart the main dashboard (Raise PR region fix)
 #   bash scripts/ec2.sh status
 #   bash scripts/ec2.sh logs [dashboard|checkpoint1]
+#   bash scripts/ec2.sh login             # aws login (remote code when run on the instance)
 #   bash scripts/ec2.sh verify
 #   bash scripts/ec2.sh open-ports        # inbound TCP 8000 and 8001, idempotent
 #   bash scripts/ec2.sh help
@@ -44,6 +45,7 @@ EC2 demo control. Run on the instance, from the repo:
   bash scripts/ec2.sh fix                                   # git pull, restart dashboard only (Raise PR)
   bash scripts/ec2.sh status
   bash scripts/ec2.sh logs [dashboard|checkpoint1]          # last 80 lines, default dashboard
+  bash scripts/ec2.sh login                                 # aws login; on EC2 prints a URL and code
   bash scripts/ec2.sh verify                                # bash scripts/deploy.sh verify
   bash scripts/ec2.sh open-ports                            # TCP ${DASH_PORT} and ${CP1_PORT} on this instance
   bash scripts/ec2.sh help
@@ -279,6 +281,20 @@ cmd_logs() {
   tail -n 80 "$log"
 }
 
+cmd_login() {
+  command -v aws >/dev/null 2>&1 || die "aws CLI is not installed. Install 2.32.0 or later: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+  export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
+  if ! aws login help >/dev/null 2>&1; then
+    die "aws login needs AWS CLI 2.32.0 or later. Update: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+  fi
+  step "AWS login (${REGION})"
+  if imds_token >/dev/null 2>&1; then
+    aws login --remote --region "$REGION"
+  else
+    aws login --region "$REGION"
+  fi
+}
+
 cmd_verify() {
   ensure_venv
   bash "$ROOT/scripts/deploy.sh" verify
@@ -328,6 +344,7 @@ case "$cmd" in
   fix) cmd_fix ;;
   status) cmd_status ;;
   logs) cmd_logs "${1:-dashboard}" ;;
+  login) cmd_login ;;
   verify) cmd_verify ;;
   open-ports) cmd_open_ports ;;
   help|-h|--help) usage ;;

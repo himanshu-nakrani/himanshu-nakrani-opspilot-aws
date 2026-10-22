@@ -4,6 +4,7 @@
     python scripts/demo_faults.py list
     python scripts/demo_faults.py baseline --url https://xyz.lambda-url.us-east-1.on.aws
     python scripts/demo_faults.py orders --watch          # URL from the CloudFormation output
+    # A missing or expired AWS session runs: bash scripts/ec2.sh login
     python scripts/demo_faults.py inventory --burst 8 --watch
 
 Each scenario sends a little healthy traffic, then a burst of requests that hit
@@ -19,8 +20,11 @@ two simultaneous faults blur the evidence the RCA agent sees.
 import argparse
 import concurrent.futures
 import os
+import re
+import subprocess
 import sys
 import time
+import urllib.request
 
 import httpx
 
@@ -38,7 +42,82 @@ SCENARIOS = {
 }
 HEALTHY_PATHS = ["/health", "/orders/101", "/orders/102", "/checkout?sku=SKU-2&coupon=WELCOME10",
                  "/inventory/SKU-1", "/payments/101/status"]
-REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+_REGION_RE = re.compile(r"^[a-z]{2}-[a-z]+-\d+$")
+REGION = "us-east-1"
+
+
+def _clean_region(value: str | None) -> str | None:
+    """Accept a region. An availability zone such as us-east-1a becomes us-east-1."""
+    text = (value or "").strip()
+    if _REGION_RE.match(text):
+        return text
+    if len(text) > 1 and _REGION_RE.match(text[:-1]):
+        return text[:-1]
+    return None
+
+
+def _imds_region() -> str | None:
+    """Region of this EC2 instance, when the metadata service answers."""
+    try:
+        token_req = urllib.request.Request(
+            "http://169.254.169.254/latest/api/token",
+            method="PUT",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+        )
+        with urllib.request.urlopen(token_req, timeout=0.4) as resp:
+            token = resp.read().decode().strip()
+        region_req = urllib.request.Request(
+            "http://169.254.169.254/latest/meta-data/placement/region",
+            headers={"X-aws-ec2-metadata-token": token},
+        )
+        with urllib.request.urlopen(region_req, timeout=0.4) as resp:
+            return resp.read().decode()
+    except Exception:
+        return None
+
+
+def resolve_region() -> str:
+    for key in ("AWS_REGION", "AWS_DEFAULT_REGION"):
+        found = _clean_region(os.environ.get(key))
+        if found:
+            return found
+    return _clean_region(_imds_region()) or "us-east-1"
+
+
+def use_region() -> str:
+    """Put a real region in the process env before boto3 builds a client."""
+    global REGION
+    REGION = resolve_region()
+    os.environ["AWS_REGION"] = REGION
+    os.environ["AWS_DEFAULT_REGION"] = REGION
+    return REGION
+
+
+def _caller_identity_ok() -> bool:
+    try:
+        import boto3
+        from botocore.exceptions import BotoCoreError, ClientError
+    except ImportError:
+        return False
+    try:
+        boto3.client("sts", region_name=REGION).get_caller_identity()
+        return True
+    except (BotoCoreError, ClientError, OSError):
+        return False
+
+
+def ensure_login() -> None:
+    """Start aws login when this process cannot call AWS."""
+    use_region()
+    if _caller_identity_ok():
+        return
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ec2.sh")
+    print("AWS session is missing or expired. Starting aws login...", flush=True)
+    code = subprocess.call(["bash", script, "login"])
+    if code != 0:
+        sys.exit(code)
+    if not _caller_identity_ok():
+        sys.exit("aws login finished, but this process still has no AWS credentials.")
 
 
 def resolve_url(url: str | None) -> str:
@@ -46,6 +125,7 @@ def resolve_url(url: str | None) -> str:
     if url:
         return url.rstrip("/")
     import boto3  # only needed when the URL is looked up
+    use_region()
     cf = boto3.client("cloudformation", region_name=REGION)
     outputs = cf.describe_stacks(StackName="OpsPilotSampleServiceStack")["Stacks"][0].get("Outputs", [])
     for o in outputs:
@@ -72,6 +152,7 @@ def run_requests(base: str, paths: list[str], parallel: int) -> None:
 
 def watch(alarm: str, minutes: int) -> None:
     import boto3
+    use_region()
     cw = boto3.client("cloudwatch", region_name=REGION)
     sfn = boto3.client("stepfunctions", region_name=REGION)
     machines = [m for m in sfn.list_state_machines()["stateMachines"] if "OpsPilot" in m["name"] or "opspilot" in m["name"]]
@@ -125,6 +206,7 @@ def main() -> None:
             print(f"{name:10} {s['path']:45} alarm={s['alarm']}\n{'':10} {s['what']}")
         return
 
+    ensure_login()
     base = resolve_url(args.url)
     print(f"Sample service: {base}\nHealthy traffic:")
     run_requests(base, HEALTHY_PATHS, args.parallel)
