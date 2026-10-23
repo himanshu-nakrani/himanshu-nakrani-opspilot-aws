@@ -15,6 +15,10 @@ fires for a specific input, so a demo can break the service on demand:
     settings    GET /settings                             KeyError           config_regression -> notify on-call
     payments    GET /payments/77/status?provider=down     TimeoutError       dependency -> notify on-call
     writes      POST /writes/orders                       throttle           dependency -> notify on-call
+    pricing     GET /pricing/SKU-1                        TypeError          code_defect -> notify on-call
+    shipments   GET /shipments/404                        IndexError         code_defect -> notify on-call
+    refunds     POST /refunds {}                          KeyError           code_defect -> notify on-call
+    tax         GET /tax/quote?subtotal=10&rate=          ValueError         code_defect -> notify on-call
 
 Every request writes one JSON line (``event`` = ``request`` or
 ``unhandled_exception``) so CloudWatch metric filters can count errors per
@@ -54,6 +58,19 @@ COUPONS: Dict[str, float] = {
     "WELCOME10": 0.10,
     "VIP20": 0.20,
 }
+
+# Shelf prices. SKU-1 was imported from a merchandising CSV as text.
+SHELF_PRICES: Dict[str, Any] = {
+    "SKU-1": "89.00",
+    "SKU-2": 129,
+    "SKU-3": 249,
+}
+SHIPPING_FLAT_FEE = 5
+
+SHIPMENTS: List[Dict[str, str]] = [
+    {"id": "100", "carrier": "ups", "status": "delivered"},
+    {"id": "101", "carrier": "usps", "status": "in_transit"},
+]
 
 FAULTS: List[Dict[str, str]] = [
     {
@@ -118,6 +135,34 @@ FAULTS: List[Dict[str, str]] = [
         "symptom": "500: ProvisionedThroughputExceededException on the orders table",
         "alarm": "OpsPilotSampleService-WriteThrottles",
         "expected_route": "dependency -> notify on-call (no PR)",
+    },
+    {
+        "id": "pricing",
+        "trigger": "GET /pricing/SKU-1",
+        "symptom": "500: TypeError adding a string shelf price to the integer shipping fee",
+        "alarm": "OpsPilotSampleService-PricingErrors",
+        "expected_route": "code_defect -> notify on-call (no PR)",
+    },
+    {
+        "id": "shipments",
+        "trigger": "GET /shipments/404",
+        "symptom": "500: IndexError indexing a shipment id that is not in the list",
+        "alarm": "OpsPilotSampleService-ShipmentErrors",
+        "expected_route": "code_defect -> notify on-call (no PR)",
+    },
+    {
+        "id": "refunds",
+        "trigger": "POST /refunds",
+        "symptom": "500: KeyError 'order_id' when the refund body is empty",
+        "alarm": "OpsPilotSampleService-RefundErrors",
+        "expected_route": "code_defect -> notify on-call (no PR)",
+    },
+    {
+        "id": "tax",
+        "trigger": "GET /tax/quote?subtotal=10&rate=",
+        "symptom": "500: ValueError converting a blank tax rate with float()",
+        "alarm": "OpsPilotSampleService-TaxErrors",
+        "expected_route": "code_defect -> notify on-call (no PR)",
     },
 ]
 
@@ -264,3 +309,32 @@ def install(app: FastAPI) -> None:
             rows.append(bytearray(REPORT_MB_PER_DAY * 1024 * 1024))
         size_mb = sum(len(r) for r in rows) // (1024 * 1024)
         return {"days": days, "buffered_mb": size_mb, "status": "exported"}
+
+    @app.get("/pricing/{sku}")
+    def quote_price(sku: str):
+        listed = SHELF_PRICES.get(sku)
+        if listed is None:
+            return JSONResponse(status_code=404, content={"detail": f"Unknown SKU {sku}"})
+        # Planted bug: a price stored as a string is added to the integer shipping fee.
+        total = listed + SHIPPING_FLAT_FEE
+        return {"sku": sku, "price": listed, "shipping": SHIPPING_FLAT_FEE, "total": total}
+
+    @app.get("/shipments/{shipment_id}")
+    def get_shipment(shipment_id: str):
+        matches = [row for row in SHIPMENTS if row["id"] == shipment_id]
+        # Planted bug: a missing shipment is indexed and raises IndexError.
+        row = matches[0]
+        return {"shipment_id": row["id"], "carrier": row["carrier"], "status": row["status"]}
+
+    @app.post("/refunds")
+    def create_refund(payload: dict):
+        # Planted bug: order_id is read with no validation, so an empty body raises KeyError.
+        order_id = payload["order_id"]
+        return {"refund_id": "r-9001", "order_id": order_id, "status": "queued"}
+
+    @app.get("/tax/quote")
+    def tax_quote(subtotal: float = 0.0, rate: str = ""):
+        # Planted bug: a blank rate is converted with float() and raises ValueError.
+        parsed_rate = float(rate)
+        tax = round(subtotal * parsed_rate, 2)
+        return {"subtotal": subtotal, "rate": parsed_rate, "tax": tax}

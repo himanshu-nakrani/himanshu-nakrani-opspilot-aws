@@ -36,6 +36,10 @@ ERROR_ALARMS = {
     "settings": f"{ALARM_PREFIX}-ConfigErrors",
     "payments": f"{ALARM_PREFIX}-PaymentTimeouts",
     "writes": f"{ALARM_PREFIX}-WriteThrottles",
+    "pricing": f"{ALARM_PREFIX}-PricingErrors",
+    "shipments": f"{ALARM_PREFIX}-ShipmentErrors",
+    "refunds": f"{ALARM_PREFIX}-RefundErrors",
+    "tax": f"{ALARM_PREFIX}-TaxErrors",
 }
 LATENCY_ALARM = f"{ALARM_PREFIX}-LatencyP95"
 CRASH_ALARM = f"{ALARM_PREFIX}-Crashes"

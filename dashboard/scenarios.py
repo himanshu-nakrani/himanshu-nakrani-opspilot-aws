@@ -234,6 +234,74 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         ],
         "suggested_fix_strategy": None,
     },
+    "string_price": {
+        "label": "String price plus shipping",
+        "description": "GET /pricing/SKU-1 adds a shelf price stored as text to the integer shipping fee and raises TypeError.",
+        "probe": {"method": "GET", "path": "/pricing/SKU-1"},
+        "alarm_name": "OpsPilotSampleService-PricingErrors",
+        "alarm_reason": "TypeError adding a string price to the shipping fee",
+        "classification": "code_defect",
+        "confidence": 0.91,
+        "severity": "sev2",
+        "summary": "TypeError in quote_price(): SKU-1's shelf price is a string and is added to the integer shipping fee.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 319, "function": "quote_price"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "TypeError: can only concatenate str (not \"int\") to str"},
+            {"kind": "stack_frame", "ref": "sample_service/faults.py:319", "claim": "total = listed + SHIPPING_FLAT_FEE in quote_price"},
+        ],
+        "suggested_fix_strategy": "Parse the shelf price to a number before adding the shipping fee, and return 400 when the stored price is not numeric.",
+    },
+    "missing_shipment": {
+        "label": "Missing shipment lookup",
+        "description": "GET /shipments/404 indexes an empty match list and raises IndexError.",
+        "probe": {"method": "GET", "path": "/shipments/404"},
+        "alarm_name": "OpsPilotSampleService-ShipmentErrors",
+        "alarm_reason": "IndexError on a missing shipment id",
+        "classification": "code_defect",
+        "confidence": 0.87,
+        "severity": "sev3",
+        "summary": "IndexError in get_shipment(): shipment 404 is not in the list and the empty match is indexed.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 326, "function": "get_shipment"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "IndexError: list index out of range"},
+            {"kind": "stack_frame", "ref": "sample_service/faults.py:326", "claim": "row = matches[0] in get_shipment"},
+        ],
+        "suggested_fix_strategy": "Return 404 when no shipment matches the id instead of indexing the empty match list.",
+    },
+    "empty_refund": {
+        "label": "Empty refund request",
+        "description": "POST /refunds with an empty body reads order_id and raises KeyError.",
+        "probe": {"method": "POST", "path": "/refunds", "json": {}},
+        "alarm_name": "OpsPilotSampleService-RefundErrors",
+        "alarm_reason": "KeyError order_id on an empty refund body",
+        "classification": "code_defect",
+        "confidence": 0.9,
+        "severity": "sev2",
+        "summary": "KeyError 'order_id' in create_refund(): the refund body is read without checking for order_id.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 332, "function": "create_refund"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "KeyError: 'order_id'"},
+            {"kind": "stack_frame", "ref": "sample_service/faults.py:332", "claim": "payload['order_id'] in create_refund"},
+        ],
+        "suggested_fix_strategy": "Validate the refund body and return 422 when order_id is missing.",
+    },
+    "blank_tax_rate": {
+        "label": "Blank tax rate",
+        "description": "GET /tax/quote?subtotal=10&rate= converts a blank rate with float() and raises ValueError.",
+        "probe": {"method": "GET", "path": "/tax/quote?subtotal=10&rate="},
+        "alarm_name": "OpsPilotSampleService-TaxErrors",
+        "alarm_reason": "ValueError converting a blank tax rate",
+        "classification": "code_defect",
+        "confidence": 0.84,
+        "severity": "sev2",
+        "summary": "ValueError in tax_quote(): a blank rate is passed to float() while quoting tax on a subtotal of 10.",
+        "suspected_location": {"file": "sample_service/faults.py", "line": 338, "function": "tax_quote"},
+        "evidence": [
+            {"kind": "log_line", "ref": "log-1", "claim": "ValueError: could not convert string to float: ''"},
+            {"kind": "stack_frame", "ref": "sample_service/faults.py:338", "claim": "parsed_rate = float(rate) in tax_quote"},
+        ],
+        "suggested_fix_strategy": "Reject a blank tax rate with 400 before converting it, and treat a missing rate as a required field.",
+    },
 }
 
 
@@ -260,11 +328,13 @@ def simulation_alarm_name(scenario_id: str) -> str:
 
 
 def expected_status(s: Dict[str, Any]) -> str:
-    """Mirror opspilot.route.route_rca for the canned RCA."""
+    """Catalogue outcome. A choice is offered when the stack frame matches a function the fix stub can patch."""
     loc: Optional[Dict[str, Any]] = s.get("suspected_location")
     if s["classification"] != "code_defect" or s["confidence"] < 0.6 or not loc:
         return "NOTIFIED"
     ref = f"{loc['file']}:{loc['line']}"
     if not any(e["kind"] == "stack_frame" and e["ref"] == ref for e in s["evidence"]):
+        return "NOTIFIED"
+    if not s.get("patch_diff"):
         return "NOTIFIED"
     return "AWAITING_CHOICE"

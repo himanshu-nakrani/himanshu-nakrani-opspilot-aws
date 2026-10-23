@@ -59,3 +59,23 @@ def test_payment_gateway_down_is_500():
 def test_throttled_write_is_500():
     res = client.post("/writes/orders", json={})
     assert res.status_code == 500
+
+
+def test_string_price_is_500():
+    res = client.get("/pricing/SKU-1")
+    assert res.status_code == 500
+
+
+def test_missing_shipment_is_500():
+    res = client.get("/shipments/404")
+    assert res.status_code == 500
+
+
+def test_empty_refund_is_500():
+    res = client.post("/refunds", json={})
+    assert res.status_code == 500
+
+
+def test_blank_tax_rate_is_500():
+    res = client.get("/tax/quote", params={"subtotal": 10, "rate": ""})
+    assert res.status_code == 500

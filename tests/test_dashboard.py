@@ -454,6 +454,26 @@ def test_planted_faults_aim_at_their_alarms():
     assert "provider=legacy" in SCENARIOS["legacy_payment"]["probe"]["path"]
     assert SCENARIOS["inventory_timeout"]["alarm_name"] == "OpsPilotSampleService-InventoryDbTimeouts"
     assert SCENARIOS["report_export"]["alarm_name"] == "OpsPilotSampleService-Crashes"
+    code_issues = {
+        "string_price": ("GET", "/pricing/SKU-1", "OpsPilotSampleService-PricingErrors", "quote_price"),
+        "missing_shipment": ("GET", "/shipments/404", "OpsPilotSampleService-ShipmentErrors", "get_shipment"),
+        "empty_refund": ("POST", "/refunds", "OpsPilotSampleService-RefundErrors", "create_refund"),
+        "blank_tax_rate": ("GET", "/tax/quote?subtotal=10&rate=", "OpsPilotSampleService-TaxErrors", "tax_quote"),
+    }
+    owners: dict = {}
+    for sid, sc in SCENARIOS.items():
+        owners.setdefault(sc["alarm_name"], []).append(sid)
+    for sid, (method, path, alarm, function) in code_issues.items():
+        sc = SCENARIOS[sid]
+        assert sc["classification"] == "code_defect"
+        assert sc["confidence"] >= 0.6
+        assert sc["probe"]["method"] == method and sc["probe"]["path"] == path
+        assert sc["alarm_name"] == alarm
+        assert owners[alarm] == [sid]
+        assert sc["suspected_location"]["function"] == function
+        ref = f"{sc['suspected_location']['file']}:{sc['suspected_location']['line']}"
+        assert any(e["kind"] == "stack_frame" and e["ref"] == ref for e in sc["evidence"])
+        assert "patch_diff" not in sc
     inventory_note = human_ending_text({
         "status": "NOTIFIED",
         "classification": "dependency",
