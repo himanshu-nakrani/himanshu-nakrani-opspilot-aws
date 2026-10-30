@@ -1,12 +1,10 @@
 """OpsPilot Pipeline Stack: Step Functions orchestration, Lambdas, CodeBuild verification, and EventBridge trigger."""
 
-import json
 import os
 import re
 from pathlib import Path
 
 import yaml
-import aws_cdk as cdk
 from aws_cdk import (
     Aws,
     Stack,

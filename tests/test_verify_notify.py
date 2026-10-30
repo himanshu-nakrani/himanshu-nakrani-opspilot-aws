@@ -166,15 +166,26 @@ def test_notify_without_pr_waits_for_a_human_choice(sample_pipeline_state, monke
     assert "HTTPException" in written["patch_diff"]
 
 
+@mock_aws
 def test_notify_lambda_handler(sample_pipeline_state, monkeypatch):
     rca, ticket, pr, verify = sample_pipeline_state
     monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/test/test/test")
 
+    posted = []
+
     def mock_slack(request: httpx.Request) -> httpx.Response:
+        posted.append(json.loads(request.content))
         return httpx.Response(200, text="ok")
 
-    transport = httpx.MockTransport(mock_slack)
-    client = httpx.Client(transport=transport)
+    client = httpx.Client(transport=httpx.MockTransport(mock_slack))
+    # Route the handler's Slack POST through the mock transport; without this the
+    # test would open a real connection to hooks.slack.com.
+    monkeypatch.setattr(
+        "opspilot.notify.send_slack_notification",
+        lambda blocks, webhook_url=None, http_client=None: send_slack_notification(
+            blocks, webhook_url=webhook_url, http_client=http_client or client
+        ),
+    )
 
     event = {
         "rca": rca.model_dump(),
@@ -183,7 +194,8 @@ def test_notify_lambda_handler(sample_pipeline_state, monkeypatch):
         "verify": verify.model_dump(),
     }
 
-    # Patch send_slack_notification to use client
     res = notify_handler(event)
     assert res["status"] == "notified"
+    assert res["slack_sent"] is True
     assert res["verdict"] == "verified"
+    assert posted and "blocks" in posted[0]

@@ -8,7 +8,6 @@ prefix, so each fault opens its own OpsPilot incident (dedup is per alarm name).
 
 from pathlib import Path
 
-import aws_cdk as cdk
 from aws_cdk import (
     Stack,
     Duration,

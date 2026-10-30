@@ -1,6 +1,5 @@
 """Tests for sample service behavior and planted bug."""
 
-import pytest
 from fastapi.testclient import TestClient
 from sample_service.app import app
 

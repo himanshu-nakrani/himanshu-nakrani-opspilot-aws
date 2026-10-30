@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import boto3
-import httpx
 import pytest
 from moto import mock_aws
 

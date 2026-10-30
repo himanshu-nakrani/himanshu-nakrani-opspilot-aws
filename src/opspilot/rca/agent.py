@@ -1,13 +1,11 @@
 """RCA Agent using AWS Bedrock Converse API with tool-use loop and structured output."""
 
-import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 import boto3
-from botocore.exceptions import ClientError
 
-from opspilot.contracts import ContextBundle, EvidenceItem, IncidentEvent, RcaResult, SuspectedLocation
+from opspilot.contracts import ContextBundle, EvidenceItem, RcaResult, SuspectedLocation
 from pydantic import ValidationError
 
 from opspilot.rca.grounding import abstain

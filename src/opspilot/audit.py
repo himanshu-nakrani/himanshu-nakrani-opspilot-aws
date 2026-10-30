@@ -7,7 +7,7 @@ instead of silently losing the audit trail. In replay mode it only logs.
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict
 
 import boto3
 

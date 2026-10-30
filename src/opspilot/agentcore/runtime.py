@@ -18,7 +18,7 @@ from strands.hooks import BeforeModelCallEvent, HookProvider, HookRegistry
 from strands.models import Model
 from strands.models.bedrock import BedrockModel
 
-from opspilot.contracts import ContextBundle, EvidenceItem, RcaResult, SuspectedLocation
+from opspilot.contracts import ContextBundle, RcaResult
 from opspilot.agentcore.gateway import AgentCoreGateway
 from opspilot.agentcore.memory import AgentCoreMemory
 from opspilot.agentcore.policy import AgentCorePolicy
@@ -385,7 +385,7 @@ class AgentCoreRuntime:
         session.model_name = type(agent.model).__name__
         prompt = build_user_prompt(bundle)
         try:
-            agent_result = agent(prompt)
+            agent(prompt)  # result lands in session.memory.submitted_rca via the submit_rca tool
             duration_ms = session.close()
             _capture_metrics(session, agent)
             logger.info("AgentCore session %s completed in %.1f ms", session.session_id, duration_ms)

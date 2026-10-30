@@ -213,7 +213,6 @@ def seed_cache_from_fixtures():
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             bundle = data.get("context_bundle", {})
-            gold = data.get("gold", {})
             inc_id = bundle.get("incident_id", Path(path).stem)
 
             # Build mock incident record from fixture
