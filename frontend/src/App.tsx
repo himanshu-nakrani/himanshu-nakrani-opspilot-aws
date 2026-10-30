@@ -93,7 +93,7 @@ export const App: React.FC = () => {
           <section aria-labelledby="incident-stream-heading" className="min-w-0 space-y-3">
             <div className="flex items-baseline justify-between gap-3">
               <div>
-                <h2 id="incident-stream-heading" tabIndex={-1} className="text-[15px] font-semibold tracking-[-0.015em] text-ink-50 focus:outline-none">
+                <h2 id="incident-stream-heading" tabIndex={-1} className="text-[15px] font-semibold tracking-[-0.015em] text-ink-50 focus:outline-hidden">
                   Incident stream
                 </h2>
               </div>
@@ -110,7 +110,7 @@ export const App: React.FC = () => {
             />
           </section>
 
-          <aside className="grid gap-6 sm:grid-cols-2 xl:grid-cols-1 rounded-lg border border-ink-800 bg-ink-900/60 p-5 [&>*+*]:sm:border-l [&>*+*]:sm:pl-6 [&>*+*]:xl:border-l-0 [&>*+*]:xl:pl-0 [&>*+*]:xl:border-t [&>*+*]:xl:pt-6 [&>*+*]:border-ink-800 [&>*+*]:border-t [&>*+*]:pt-6 [&>*+*]:sm:border-t-0 [&>*+*]:sm:pt-0">
+          <aside className="grid gap-6 sm:grid-cols-2 xl:grid-cols-1 rounded-lg border border-ink-800 bg-ink-900/60 p-5 sm:[&>*+*]:border-l sm:[&>*+*]:pl-6 xl:[&>*+*]:border-l-0 xl:[&>*+*]:pl-0 xl:[&>*+*]:border-t xl:[&>*+*]:pt-6 [&>*+*]:border-ink-800 [&>*+*]:border-t [&>*+*]:pt-6 sm:[&>*+*]:border-t-0 sm:[&>*+*]:pt-0">
             <IncidentBreakdown incidents={data.incidents} activeClass={filterClass} onSelectClass={setFilterClass} />
             <ArchitectureBanner />
           </aside>
@@ -119,11 +119,11 @@ export const App: React.FC = () => {
       </main>
 
       <footer className="border-t border-ink-800 bg-ink-950">
-        <div className="px-4 sm:px-6 h-9 flex items-center gap-4 font-mono text-2xs text-ink-400 overflow-x-auto whitespace-nowrap [scrollbar-width:none]">
+        <div className="px-4 sm:px-6 h-9 flex items-center gap-4 font-mono text-2xs text-ink-400 overflow-x-auto whitespace-nowrap scrollbar-none">
           <button
             type="button"
             onClick={() => setOverlay({ kind: 'agentcore' })}
-            className="inline-flex items-center gap-1.5 hover:text-ink-100 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal-400 rounded-sm"
+            className="inline-flex items-center gap-1.5 hover:text-ink-100 transition-colors focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-signal-400 rounded-xs"
             title="Inspect Strands SDK and AgentCore configuration"
           >
             <span className={`w-1.5 h-1.5 rounded-full ${data.stats?.strands_sdk_version ? 'bg-ok-400' : 'bg-ink-600'}`} aria-hidden="true" />
@@ -134,7 +134,7 @@ export const App: React.FC = () => {
           <span className="tnum">{data.stats ? `${data.stats.agentcore_policies_active.length} policies` : '…'}</span>
           <span className="tnum">{data.stats ? `${data.stats.agentcore_gateway_tools.length} gateway tools` : '…'}</span>
           <span className="ml-auto hidden sm:inline text-ink-500">
-            OpsPilot · proof of concept · <kbd className="px-1 rounded-sm border border-ink-700 text-ink-300">/</kbd> search
+            OpsPilot · proof of concept · <kbd className="px-1 rounded-xs border border-ink-700 text-ink-300">/</kbd> search
           </span>
         </div>
       </footer>

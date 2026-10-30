@@ -116,7 +116,7 @@ export const Modal: React.FC<ModalProps> = ({
         aria-labelledby={titleId}
         aria-describedby={description ? descId : undefined}
         tabIndex={-1}
-        className={`bg-ink-900 border-ink-700 flex flex-col shadow-[0_24px_64px_-16px_rgba(0,0,0,0.6)] overflow-hidden focus:outline-none ${panelClass}`}
+        className={`bg-ink-900 border-ink-700 flex flex-col shadow-[0_24px_64px_-16px_rgba(0,0,0,0.6)] overflow-hidden focus:outline-hidden ${panelClass}`}
       >
         <div className="px-5 py-4 border-b border-ink-800 flex items-start justify-between gap-4">
           <div className="flex items-start gap-2.5 min-w-0">
@@ -138,7 +138,7 @@ export const Modal: React.FC<ModalProps> = ({
               type="button"
               onClick={onClose}
               aria-label="Close dialog"
-              className="p-1.5 text-ink-400 hover:text-ink-50 rounded-md hover:bg-ink-800 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-signal-400"
+              className="p-1.5 text-ink-400 hover:text-ink-50 rounded-md hover:bg-ink-800 transition-colors focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-signal-400"
             >
               <X className="w-5 h-5" aria-hidden="true" />
             </button>

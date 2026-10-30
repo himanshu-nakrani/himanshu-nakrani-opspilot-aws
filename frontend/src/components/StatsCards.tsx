@@ -49,7 +49,7 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ stats }) => {
 
   return (
     <section aria-label="Key metrics" className="rounded-lg border border-ink-800 bg-ink-900/60">
-      <dl className="grid grid-cols-2 lg:grid-cols-4 [&>*]:border-ink-800 [&>*:nth-child(odd)]:border-r lg:[&>*]:border-r lg:[&>*:last-child]:border-r-0 [&>*:nth-child(-n+2)]:border-b lg:[&>*]:border-b-0">
+      <dl className="grid grid-cols-2 lg:grid-cols-4 *:border-ink-800 [&>*:nth-child(odd)]:border-r lg:*:border-r lg:[&>*:last-child]:border-r-0 [&>*:nth-child(-n+2)]:border-b lg:*:border-b-0">
         <Cell
           index={0}
           label="Incidents"

@@ -1,6 +1,99 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --color-ink-50: #f3f4f6;
+  --color-ink-100: #e3e5e9;
+  --color-ink-200: #c7cad1;
+  --color-ink-300: #a3a8b2;
+  --color-ink-400: #848a96;
+  --color-ink-500: #757b88;
+  --color-ink-600: #4a4f5a;
+  --color-ink-700: #363a43;
+  --color-ink-800: #272a31;
+  --color-ink-850: #1e2127;
+  --color-ink-900: #17191e;
+  --color-ink-950: #0e0f12;
+
+  --color-signal-200: #d6e2ff;
+  --color-signal-300: #b3c8ff;
+  --color-signal-400: #8eabff;
+  --color-signal-500: #6d8df5;
+  --color-signal-600: #5371dc;
+  --color-signal-700: #3e58b0;
+
+  --color-ok-300: #86dfab;
+  --color-ok-400: #52cc88;
+  --color-ok-500: #33b06c;
+
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+
+  --animate-fade-in: fade-in 150ms ease-out;
+  --animate-rise-in: rise-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-slide-in: slide-in 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  --animate-pulse-dot: pulse-dot 2s ease-in-out infinite;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes slide-in {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
 
 @layer base {
   :root {
@@ -24,23 +117,16 @@
   }
 
   :focus-visible {
-    outline: 2px solid theme('colors.signal.400');
+    outline: 2px solid var(--color-signal-400);
     outline-offset: 2px;
   }
 
   code,
   pre,
   .font-mono {
-    font-family: theme('fontFamily.mono');
+    font-family: var(--font-mono);
     font-feature-settings: 'zero' on;
   }
-}
-
-@layer utilities {
-  .tnum {
-    font-variant-numeric: tabular-nums;
-  }
-
 }
 
 ::-webkit-scrollbar {
@@ -48,15 +134,15 @@
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: theme('colors.ink.950');
+  background: var(--color-ink-950);
 }
 ::-webkit-scrollbar-thumb {
-  background: theme('colors.ink.700');
-  border: 2px solid theme('colors.ink.950');
+  background: var(--color-ink-700);
+  border: 2px solid var(--color-ink-950);
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: theme('colors.ink.600');
+  background: var(--color-ink-600);
 }
 
 @media (prefers-reduced-motion: reduce) {

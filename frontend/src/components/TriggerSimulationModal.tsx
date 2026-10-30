@@ -182,7 +182,7 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
                 return (
                   <label
                     key={sc.id}
-                    className={`relative flex flex-col gap-1 rounded-md border px-3 py-2.5 cursor-pointer transition-colors duration-100 has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-signal-400 ${
+                    className={`relative flex flex-col gap-1 rounded-md border px-3 py-2.5 cursor-pointer transition-colors duration-100 has-focus-visible:outline-solid has-focus-visible:outline-2 has-focus-visible:outline-signal-400 ${
                       on ? 'border-ink-400 bg-ink-850' : 'border-ink-800 hover:border-ink-700 hover:bg-ink-900'
                     }`}
                   >
@@ -264,7 +264,7 @@ export const TriggerSimulationModal: React.FC<TriggerSimulationModalProps> = ({ 
           </div>
         )}
         {phase === 'done' && result && (
-          <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-2 text-xs font-mono bg-ink-950 border border-ink-800 rounded-lg p-4">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs font-mono bg-ink-950 border border-ink-800 rounded-lg p-4">
             <dt className="text-ink-400">Request</dt>
             <dd className="text-ink-200 break-all">{result.probe || 'sample service'}</dd>
             <dt className="text-ink-400">Alarm</dt>

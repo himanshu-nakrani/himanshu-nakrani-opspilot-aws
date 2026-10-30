@@ -55,7 +55,7 @@ export const TicketsPage: React.FC<TicketsPageProps> = ({ onOpenIncident }) => {
     <section aria-labelledby="tickets-heading" className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 id="tickets-heading" tabIndex={-1} className="text-[15px] font-semibold tracking-[-0.015em] text-ink-50 focus:outline-none">
+          <h2 id="tickets-heading" tabIndex={-1} className="text-[15px] font-semibold tracking-[-0.015em] text-ink-50 focus:outline-hidden">
             Tickets
           </h2>
           <p className="mt-1 text-xs text-ink-400 max-w-xl">

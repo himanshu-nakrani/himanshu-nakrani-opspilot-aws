@@ -50,13 +50,13 @@ const TraceLegend: React.FC<{ kinds: SpanKind[]; hasError: boolean }> = ({ kinds
   <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-ink-400" aria-label="Span kinds">
     {kinds.map((k) => (
       <li key={k} className="inline-flex items-center gap-1.5">
-        <span className={`w-2.5 h-1.5 rounded-sm ${KIND_BAR[k]}`} aria-hidden="true" />
+        <span className={`w-2.5 h-1.5 rounded-xs ${KIND_BAR[k]}`} aria-hidden="true" />
         {KIND_LABEL[k]}
       </li>
     ))}
     {hasError && (
       <li className="inline-flex items-center gap-1.5">
-        <span className="w-2.5 h-1.5 rounded-sm bg-red-400" aria-hidden="true" />
+        <span className="w-2.5 h-1.5 rounded-xs bg-red-400" aria-hidden="true" />
         Blocked or failed
       </li>
     )}
@@ -159,7 +159,7 @@ export const AgentTrace: React.FC<AgentTraceProps> = ({ runId, compact = false }
             {run.spans.length} spans · ↑↓ to step
           </span>
         </div>
-        <div className={`${GRID} px-3 py-1.5 bg-ink-950/60 border-b border-ink-800 text-2xs uppercase tracking-[0.1em] text-ink-400`}>
+        <div className={`${GRID} px-3 py-1.5 bg-ink-950/60 border-b border-ink-800 text-2xs uppercase tracking-widest text-ink-400`}>
           <span>Span</span>
           <span className="relative h-4 font-mono normal-case tracking-normal tnum" aria-hidden="true">
             {/* The timeline column can be ~75px in the side panel: label only the ends; quarter gridlines carry the scale. */}
@@ -185,7 +185,7 @@ export const AgentTrace: React.FC<AgentTraceProps> = ({ runId, compact = false }
                   onClick={() => setSelected(span.id)}
                   className={`relative w-full ${GRID} items-center px-3 py-1.5 text-left text-xs transition-colors duration-100 ${
                     isActive ? 'bg-ink-850' : isCycle ? 'bg-ink-950/40 hover:bg-ink-900' : 'hover:bg-ink-900'
-                  } focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal-400`}
+                  } focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal-400`}
                 >
                   {isActive && <span className="absolute left-0 inset-y-0 w-[2px] bg-signal-400" aria-hidden="true" />}
                   <span className="flex items-center gap-1.5 min-w-0" style={{ paddingLeft: `${span.depth * 12}px` }}>
@@ -235,7 +235,7 @@ export const RunMetrics: React.FC<{ run: AgentRun }> = ({ run }) => {
       <dl className="grid grid-cols-2 sm:grid-cols-5 gap-px rounded-lg overflow-hidden border border-ink-800 bg-ink-800">
         {items.map(([k, v]) => (
           <div key={k} className="bg-ink-900 px-3 py-2">
-            <dt className="text-2xs uppercase tracking-[0.1em] text-ink-400">{k}</dt>
+            <dt className="text-2xs uppercase tracking-widest text-ink-400">{k}</dt>
             <dd className="mt-0.5 font-mono tabular-nums text-sm text-ink-50">{v}</dd>
           </div>
         ))}
@@ -259,7 +259,7 @@ const SpanInspector: React.FC<{ span: TraceSpan }> = ({ span }) => {
   return (
     <section aria-label={`Span ${spanLabel(span)}`} className="rounded-lg border border-ink-800 bg-ink-950/50 p-3 space-y-3">
       <header className="flex items-center gap-1.5 text-xs text-ink-100">
-        <span className={`w-2.5 h-1.5 rounded-sm ${span.status === 'error' ? 'bg-red-400' : KIND_BAR[span.kind] ?? 'bg-ink-600'}`} aria-hidden="true" />
+        <span className={`w-2.5 h-1.5 rounded-xs ${span.status === 'error' ? 'bg-red-400' : KIND_BAR[span.kind] ?? 'bg-ink-600'}`} aria-hidden="true" />
         <span className={`font-medium ${span.kind === 'tool' ? 'font-mono' : ''}`}>{spanLabel(span)}</span>
         <span className="text-ink-500">· {KIND_LABEL[span.kind] ?? humanize(span.kind)}</span>
       </header>
@@ -280,8 +280,8 @@ const SpanInspector: React.FC<{ span: TraceSpan }> = ({ span }) => {
 
 const Payload: React.FC<{ label: string; body: string }> = ({ label, body }) => (
   <div>
-    <div className="text-2xs uppercase tracking-[0.1em] text-ink-400 mb-1">{label}</div>
-    <pre className="max-h-56 overflow-auto rounded-md bg-ink-950 border border-ink-850 p-2 text-2xs font-mono text-ink-200 whitespace-pre-wrap break-words">
+    <div className="text-2xs uppercase tracking-widest text-ink-400 mb-1">{label}</div>
+    <pre className="max-h-56 overflow-auto rounded-md bg-ink-950 border border-ink-850 p-2 text-2xs font-mono text-ink-200 whitespace-pre-wrap wrap-break-word">
       {body}
     </pre>
   </div>
