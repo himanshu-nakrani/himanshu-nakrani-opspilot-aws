@@ -20,7 +20,7 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 
 ## Deploy
 
-One command deploys the three stacks (core, sample service with planted faults, pipeline), seeds both CodeCommit repos and the optional knowledge base, writes secrets, and smoke-checks the result. Needs Python 3.10+, Node 18+, and AWS credentials — no Docker, no AWS CLI.
+One command deploys the three stacks (core, sample service with planted faults, pipeline), seeds both CodeCommit repos and the optional knowledge base, writes secrets, and smoke-checks the result. Needs Python 3.10+, Node 20.19+ (or 22.12+), and AWS credentials — no Docker, no AWS CLI.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
@@ -39,7 +39,7 @@ Full reference for every subcommand, environment variable, and the AWS resources
 
 ## Dashboard
 
-The SRE dashboard (FastAPI + React 18/TypeScript/Vite/Tailwind) shows every incident end-to-end:
+The SRE dashboard (FastAPI + React 19/TypeScript 7/Vite 8/Tailwind 4) shows every incident end-to-end:
 
 ```bash
 make dashboard          # or: bash scripts/deploy.sh dashboard  → http://localhost:8000

@@ -33,7 +33,7 @@ src/opspilot/
   redact.py            PII/secret scrubbing (emails, IPs, AWS keys, GitHub/Bearer tokens, k=v secrets)
   audit.py             DynamoDB incident updates + timeline (raises in live mode)
 dashboard/             FastAPI app (app.py), scenario catalog (scenarios.py), run records (runs.py), endings text
-frontend/              React 18 + TypeScript + Vite + Tailwind SPA (built into frontend/dist)
+frontend/              React 19 + TypeScript 7 + Vite 8 + Tailwind 4 SPA (built into frontend/dist)
 infra/                 CDK: core_stack, sample_service_stack, pipeline_stack, app_delivery, bundling
 sample_service/        FastAPI+Mangum storefront with planted faults (faults.py) and its own tests
 statemachine/          opspilot.asl.json — Step Functions contract (placeholders substituted by pipeline_stack)
