@@ -23,9 +23,13 @@ def _json_lines(out: str):
     return [json.loads(line) for line in out.splitlines() if line.startswith("{")]
 
 
-def test_fault_catalog_lists_every_scenario():
-    ids = {f["id"] for f in client.get("/faults").json()["faults"]}
-    assert ids == {"orders", "checkout", "inventory", "payments", "reports"}
+def test_fault_catalog_entries_are_complete():
+    payload = client.get("/faults").json()
+    assert payload["service"] == "sample-service"
+    assert payload["faults"], "catalog must not be empty"
+    for entry in payload["faults"]:
+        assert {"id", "trigger", "symptom", "alarm", "expected_route"} <= set(entry)
+        assert entry["alarm"].startswith(("OpsPilotSampleService",))
 
 
 def test_healthy_paths_return_200():

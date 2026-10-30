@@ -142,7 +142,16 @@ class AgentCoreOfflineModel(Model):
         super().__init__()
         self.bundle = bundle
         self.turn = 0
-        self._converter = BedrockModel(model_id="anthropic.claude-3-5-sonnet-20241022-v2:0", region_name="us-east-1")
+        # Only convert_non_streaming_to_streaming is used; the explicit offline session keeps
+        # the constructor from resolving the ambient credential chain (zero-credential promise).
+        self._converter = BedrockModel(
+            model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
+            boto_session=boto3.Session(
+                region_name="us-east-1",
+                aws_access_key_id="offline",
+                aws_secret_access_key="offline",
+            ),
+        )
 
     def update_config(self, **kwargs):
         pass

@@ -2,117 +2,118 @@
 
 OpsPilot is an agent pipeline that takes a production alert and carries it through to a reviewable fix:
 
-**CloudWatch alarm → EventBridge → Step Functions → RCA agent (Bedrock) → classification → AWS OpsCenter OpsItem → fix PR (AWS CodeCommit) → CodeBuild tests → Slack/SNS notification → a human merges**
+**CloudWatch alarm → EventBridge → Step Functions → RCA agent (Strands + Bedrock) → OpsCenter OpsItem → Slack/SNS notify → an operator raises a fix PR (CodeCommit) → CodeBuild verification → a human merges → CodePipeline deploys**
 
-This is a proof-of-concept. It targets **one** deliberately broken sample service and **deterministic code-level failures** (unhandled exceptions, missing env vars). It never merges or deploys on its own.
+This is a proof-of-concept. It targets **one** deliberately broken sample service (a FastAPI-on-Lambda storefront with 13 planted fault triggers) and **deterministic code-level failures**. It never merges and never deploys on its own.
 
 ## Status
+
 | Milestone | State |
 |---|---|
-| M0 Design docs, contracts, state machine | ✅ this commit |
-| M1 Sample service + failure + alarm → EventBridge | ✅ done |
-| M2 Context collector + RCA agent (Bedrock, structured output) | ✅ done |
-| M3 Classifier/router + OpsCenter ticket | ✅ done |
-| M4 Patch agent → branch + PR with reproduction test | ✅ done |
-| M5 CodeBuild verification + notification | ✅ done |
-| M6 Offline eval harness (replay fixtures) | ✅ done |
+| M0 Design docs, contracts, state machine | ✅ |
+| M1 Sample service + failure + alarm → EventBridge | ✅ |
+| M2 Context collector + RCA agent (Bedrock, structured output) | ✅ |
+| M3 Classifier/router + OpsCenter ticket | ✅ |
+| M4 Patch agent → branch + PR with reproduction test | ✅ (stub generator, 4 known bugs) |
+| M5 CodeBuild verification + notification | ✅ |
+| M6 Offline eval harness (replay fixtures) | ✅ (offline model only; live-model eval mode is still to do) |
 
 ## Deploy
 
-One command deploys the whole stack (core, sample service with planted faults, pipeline), writes secrets and checks the result:
+One command deploys the three stacks (core, sample service with planted faults, pipeline), seeds both CodeCommit repos and the optional knowledge base, writes secrets, and smoke-checks the result. Needs Python 3.10+, Node 18+, and AWS credentials — no Docker, no AWS CLI.
 
 ```bash
-cp .env.deploy.example .env.deploy   # AWS profile/region, CodeCommit repo name
-bash scripts/deploy.sh                    # preflight -> bootstrap -> synth -> deploy -> secrets -> verify
+python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+cp .env.deploy.example .env.deploy    # AWS_PROFILE/AWS_REGION, CODECOMMIT_REPO, BEDROCK_MODEL_ID
+bash scripts/deploy.sh                # preflight → bootstrap → synth → deploy → seed → seed-knowledge → secrets → verify
 ```
 
-See docs/DEMO_RUNBOOK.md for every subcommand and the demo flow.
-
-On the EC2 instance, `scripts/ec2.sh` starts and stops the demo processes. It does not create the stacks; `bash scripts/deploy.sh` does that.
+Then break the service on purpose and watch OpsPilot respond:
 
 ```bash
-bash scripts/ec2.sh startup          # dashboard :8000 and Checkpoint 1 UI :8001
-bash scripts/ec2.sh kill             # stop both
-bash scripts/ec2.sh restart
-bash scripts/ec2.sh redeploy         # git pull, then update the existing stacks
-bash scripts/ec2.sh fix              # git pull, restart the dashboard (Raise PR region)
-bash scripts/ec2.sh status
-bash scripts/ec2.sh logs dashboard
-bash scripts/ec2.sh verify
-bash scripts/ec2.sh open-ports       # inbound TCP 8000 and 8001
+python3 scripts/demo_faults.py list
+python3 scripts/demo_faults.py orders --watch    # alarm in ~1–2 min, then the pipeline runs
 ```
+
+Full reference for every subcommand, environment variable, and the AWS resources created: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Demo flow and the fault catalog: [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md).
+
+## Dashboard
+
+The SRE dashboard (FastAPI + React 18/TypeScript/Vite/Tailwind) shows every incident end-to-end:
+
+```bash
+make dashboard          # or: bash scripts/deploy.sh dashboard  → http://localhost:8000
+make frontend           # Vite dev server on :5173, proxies /api to :8000
+```
+
+- **Incident stream** — live rows from the DynamoDB incidents table (plus offline fixture replays when no AWS credentials are present), filterable by classification with confidence and status.
+- **RCA inspector** — summary, `file:line` suspected location, fix strategy, and grounded evidence citations (log ids, stack frames, commits).
+- **Patch diff viewer + operator actions** — *I'll apply this myself* or *Raise PR*; Raise PR commits the stub patch plus a reproduction test to the storefront repo and opens one CodeCommit pull request, in-process (an alarm run can never open a PR).
+- **PR lifecycle tracking** — CodeCommit PR state, CodeBuild verification verdict (commented on the PR), post-merge CodePipeline deploy status, and knowledge-base ingestion of the merged solution.
+- **Simulation** — 17 scenarios that fire a real HTTP probe at the deployed sample service so the real alarm/pipeline path runs.
+- **Agent runs & traces** — Strands event-loop spans, gateway tool calls, policy audit (waterfall view).
+- **Tickets page** — OpsCenter OpsItems filed by OpsPilot.
+- **Evals** — replays the 10 M6 fixtures through the offline model and reports the metrics.
+
+On the EC2 demo instance, `scripts/ec2.sh` controls the processes (dashboard `:8000`, Checkpoint 1 UI `:8001`): `startup`, `kill`, `restart`, `redeploy`, `fix`, `status`, `logs`, `login`, `verify`, `open-ports`. It does not create stacks; `scripts/deploy.sh` does.
 
 ## Repo map
-- docs/ARCHITECTURE.md — components, data flow, decisions and guardrails
-- docs/IMPLEMENTATION_SPEC.md — the build spec: layout, module contracts, acceptance criteria per milestone
-- contracts/*.schema.json — JSON Schemas passed between the steps (these are the source of truth)
-- statemachine/opspilot.asl.json — the Step Functions definition (contract; ARNs are substituted at deploy time)
+
+| Path | What it is |
+|---|---|
+| `src/opspilot/` | Pipeline code: ingest/dedup, context collector, RCA agent (+grounding), router, OpsCenter ticketing, fix agent (CodeCommit/GitHub), verify, notify, knowledge base, local AgentCore-style modules |
+| `dashboard/` | FastAPI app + scenario catalog + agent-run records |
+| `frontend/` | React SPA served by the dashboard (`frontend/dist`) |
+| `infra/` | CDK stacks: `CoreStack`, `SampleServiceStack`, `PipelineStack` + app delivery (CodePipeline/CodeDeploy) |
+| `sample_service/` | The deliberately broken storefront (FastAPI + Mangum on Lambda) and its planted faults |
+| `statemachine/opspilot.asl.json` | Step Functions definition (ARN placeholders substituted at deploy) |
+| `contracts/*.schema.json` | JSON Schemas passed between steps — the source of truth |
+| `scripts/` | `deploy.sh`, `deploy_check.py`, `ec2.sh`, `demo_faults.py`, `trigger_incident.py` |
+| `evals/` | M6 harness + 10 recorded fixtures with gold labels |
+| `tests/` | Unit tests (moto/fakes, no network, no credentials) |
+| `checkpoint1/` | Frozen hackathon Checkpoint 1 snapshot (own README; UI on :8001) |
+| `docs/ARCHITECTURE.md` | Components, data flow, guardrails |
+| `docs/DEPLOYMENT.md` | Deploy/ops reference: scripts, stacks, env vars, IAM |
+| `docs/DEVELOPMENT.md` | Local dev, modes, testing, evals, dashboard API |
+| `docs/DEMO_RUNBOOK.md` | Demo flow + full fault/scenario catalog |
+| `docs/IMPLEMENTATION_SPEC.md`, `docs/REVIEW_FIXES.md` | Historical: original build spec and engineering-review fix log |
 
 ## Key design choices
-1. **Evidence-first RCA with abstention.** The RCA agent must cite log lines or stack frames for every claim. When evidence is weak it returns `classification: "insufficient_evidence"`; that route files a ticket and notifies, and **never opens a PR**.
-2. **The issue type decides the route:** `code_defect` → fix PR; `config_regression` → ticket + notify until a revert agent exists; `dependency`/`resource` → ticket + notify only.
-3. **A verified PR, not just a green build.** The patch agent must add a reproduction test that fails on `main` and passes on the fix branch. CodeBuild runs both checks.
-4. **Least privilege.** The LLM gets no AWS write permissions. Source control is AWS CodeCommit with IAM only (no Git tokens): the fix Lambda's role is scoped to the one repo ARN and can create branches/commits/PRs but has no merge permission, so a human merges every fix.
-5. **The model is configurable** (`BEDROCK_MODEL_ID`). The default is the Moonshot Kimi K3 US inference profile, `us.moonshotai.kimi-k3`.
 
-## Agent Stack: AWS Strands Agents SDK + AgentCore-style components
-> **Honesty note:** the agent loop uses the real Strands SDK (`strands-agents`) and Bedrock.
-> The "AgentCore" Runtime/Gateway/Policy/Memory classes are **local Python modules modelled on
-> Amazon Bedrock AgentCore concepts**. They do not call the AgentCore service, MCP or any AgentCore
-> AWS resource. Swap in the real AgentCore SDK only if you need long sessions or cross-incident memory.
+1. **Evidence-first RCA with abstention.** Every RCA goes through `opspilot.rca.grounding.ground_rca`: evidence refs must match the context bundle exactly (log ids, stack-frame `file:line`, commit SHAs). Fabricated refs, a `code_defect` without a grounded stack frame, Bedrock errors, empty/`max_tokens` responses, malformed output after one repair attempt, or no `submit_rca` within 6 turns all force `insufficient_evidence` with confidence ≤ 0.4 — a route that files a ticket and notifies but **never offers a PR**.
+2. **The classification decides the route.** `code_defect` at confidence ≥ 0.6 *with* a stack-frame-backed `suspected_location` → a suggested diff the operator can apply or raise as a PR. `config_regression` (no revert agent yet), `dependency`, `resource`, `insufficient_evidence` → ticket + notify only.
+3. **A verified PR, not just a green build.** The fix agent adds a reproduction test that must fail on the base commit (pytest exit code 1, not "file missing") and pass with the fix. CodeBuild runs both phases and comments the verdict on the PR. A failed verification goes to `MarkNeedsHuman`, never to a retry of the identical patch.
+4. **The fix agent is a stub that knows it.** It only patches the 4 planted bugs it has generators for (`get_order`, `create_order`, `checkout`, `payment_status`) and raises `UnsupportedFixTarget` for anything else. Patches are capped at 3 files / 80 lines with protected paths (CI config, IaC, contracts, dependency manifests).
+5. **Least privilege, human in the loop.** The LLM gets no AWS write permissions. Source control is CodeCommit with IAM only (no Git tokens); the fix Lambda's role is scoped to the one repo ARN with branch/commit/PR permissions but **no merge permission**. Bedrock is scoped to the configured model ARN. Every alarm-path failure routes to Notify; a failed execution alarms SNS via `opspilot-executions-failed`.
+6. **Prompt-injection hygiene.** Logs, code, and commits reach the model inside `<untrusted_*>` tags with explicit do-not-follow instructions; `get_file` is sandboxed to the repo checkout (no absolute paths, `..`, `.git/`, `.env*`); `get_commit_diff` accepts hex SHAs only. PII/secrets (emails, IPs, AWS keys, tokens) are redacted before any Bedrock call.
+7. **The model is configurable** (`BEDROCK_MODEL_ID`, default `us.moonshotai.kimi-k3`). Model quirks are handled in code: Kimi K3 rejects `temperature` and replayed reasoning blocks, so both are stripped.
+8. **Optional long-term memory.** When `KNOWLEDGE_BASE_ID` is set, merged-PR solutions are ingested into a managed Bedrock Knowledge Base and the RCA agent can call `retrieve_knowledge` to find how a similar incident was fixed before.
 
-### RCA safety rules (enforced in code)
-- Every RCA from any path goes through `opspilot.rca.grounding.ground_rca`. Evidence refs must match
-  the context bundle exactly (log ids, stack-trace `file:line`, commit SHAs). Any fabricated ref, or a
-  `code_defect` without a grounded stack frame/commit, makes the result **abstain** (`insufficient_evidence`).
-- Bedrock errors, empty/`max_tokens` responses, malformed output after one repair, or no `submit_rca`
-  within `max_turns` all **abstain**. The keyword heuristic is offline-only and capped below the PR threshold.
-- A suggested diff needs `code_defect` + confidence ≥ 0.6 + a `suspected_location` backed by matching stack-frame evidence.
-  The pipeline stops there. The incident screen offers two actions: apply the diff yourself, or raise a CodeCommit pull request.
-  `config_regression` files a ticket and notifies until a revert agent exists.
-- The fix agent refuses anything but the planted sample bug, and never opens a PR if a git step fails.
-- Model tools are sandboxed: `get_file` stays inside the repo (no absolute paths, `..`, `.git/`, `.env*`);
-  `get_commit_diff` only accepts hex SHAs. Logs/code/commits reach the model inside `<untrusted_*>` tags.
-- `BEDROCK_MODEL_ID` and `AWS_REGION` are read from the environment; set `OPSPILOT_AGENT_BACKEND=converse`
-  to use the plain Converse loop instead of Strands.
+## Agent stack: Strands SDK + AgentCore-style components
 
-Component overview:
-- **AWS Strands Agents SDK (`strands-agents`):** Model-first agent execution loop (`strands.Agent`, `@tool` decorators, streaming events, multi-turn reasoning).
-- **Amazon Bedrock AgentCore Architecture:**
-  - **AgentCore Runtime:** Serverless agent execution environment, session isolation, task handoff, and CloudWatch EMF telemetry (`OpsPilot/AgentCore`).
-  - **AgentCore Gateway:** Model Context Protocol (MCP) compatible tool gateway (`query_logs`, `get_file`, `get_commit_diff`, `submit_rca`).
-  - **AgentCore Policy:** Blast-radius guardrails (max 3 files / 80 lines, protected files check), evidence grounding verification, and automatic abstention on noisy logs.
-  - **AgentCore Memory:** Structured working memory for session state, ruled-out hypotheses, and tool audit trails.
+> **Honesty note:** the agent loop uses the real Strands SDK (`strands-agents`) and real Bedrock
+> (`strands.models.bedrock.BedrockModel`). The "AgentCore" Runtime/Gateway/Policy/Memory classes are
+> **local Python modules modelled on Amazon Bedrock AgentCore concepts** (`src/opspilot/agentcore/`).
+> They do not call the AgentCore service, MCP, or any AgentCore AWS resource.
 
-## SRE Dashboard (React + Vite + Tailwind + FastAPI)
-OpsPilot provides a modern, responsive SRE operational dashboard built with **React 18, TypeScript, Vite, Tailwind CSS, and Lucide icons**, served by the **FastAPI** backend:
+- **Strands agent loop** — `strands.Agent` with `@tool` functions, multi-turn reasoning, streaming events; `OPSPILOT_AGENT_BACKEND=converse` switches to the plain Bedrock Converse loop instead.
+- **AgentCore Runtime (local)** — session lifecycle, model selection (live `BedrockModel` vs the deterministic `AgentCoreOfflineModel` for tests/evals/offline demos), CloudWatch EMF telemetry (`OpsPilot/AgentCore`).
+- **AgentCore Gateway (local)** — tool registry with Bedrock/MCP-compatible schemas: `retrieve_knowledge`, `query_logs`, `get_file`, `get_commit_diff`, `submit_rca`.
+- **AgentCore Policy (local)** — blast-radius guardrails (3 files / 80 lines, protected paths), evidence grounding verification, forced abstention.
+- **AgentCore Memory (local)** — per-session working memory: tool audit trail, ruled-out hypotheses, notes, token counts.
 
-### Running the Dashboard
+Details and the full data-flow diagrams: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Development
+
 ```bash
-# 1. Full Production Mode: Run FastAPI with integrated React SPA:
-make dashboard
-# -> Open http://localhost:8000
-
-# 2. Frontend Development Mode (Vite Hot-Reload):
-make frontend
-# -> Open http://localhost:5173 (proxies /api requests to FastAPI on port 8000)
-
-# 3. Build React distribution:
-make build-frontend
+make test               # pytest, fake AWS credentials, no network
+make eval               # replay the 10 fixtures through the offline model
+make trigger-incident   # local M1 dedup demo (in-process, moto)
 ```
 
-### Dashboard Features
-- **Live Incident Stream & Audit Trail:** Search, filter, and inspect incidents by classification (`code_defect`, `config_regression`, `dependency`, `resource`, `insufficient_evidence`) with confidence bars and status indicators.
-- **Root Cause & Grounded Evidence Inspector:** View full RCA summaries, pinpointed source file:line locations, suggested fix strategies, and validated citations (log IDs, stack trace frames, git commits).
-- **Interactive Unified Patch Diff Viewer:** Syntax-highlighted git diff display with additions (`+`), deletions (`-`), and hunk headers.
-- **One-Click Incident Simulation (M1):** Trigger the planted missing-order bug on `sample-service`, observe CloudWatch metric filter thresholds, alarm state transitions, DynamoDB 15-minute dedup verification, and automated patch creation.
-- **M6 Benchmark Evaluation Suite:** Replays the 10 fixtures through the scripted offline model. These scores check the plumbing, not model quality; a live-model eval mode is still to do.
-- **AWS Strands & Bedrock AgentCore Inspector:** Live panel displaying active AgentCore policies (blast radius, protected paths, evidence grounding, abstention) and Gateway tools (`query_logs`, `get_file`, `get_commit_diff`, `submit_rca`).
+Everything runs offline by default (`OPSPILOT_MODE=replay`); deployed Lambdas get `OPSPILOT_MODE=live`, where every external write either succeeds and is recorded or raises so Step Functions can route the failure. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-- **API Endpoints:**
-  - `GET /` — Serves modern React SPA (with fallback to lightweight SSR template)
-  - `GET /api/incidents` — List all incidents & audit logs
-  - `GET /api/incidents/{id}` — Full incident RCA, evidence & unified patch diff
-  - `GET /api/stats` — Incident KPI metrics and active AgentCore policies
-  - `POST /api/trigger` — Simulate planted bug failure & alarm dedup
-  - `GET /api/evals` — Execute live M6 benchmark fixtures replay
+## Deliberately out of scope
+
+Multi-service causal analysis, metric anomaly detection, auto-merge or auto-deploy, multi-repo support, GitLab, Datadog/Sentry ingestion (the design is source-neutral: only CollectContext changes), live-model evals, a real (non-stub) patch agent, an AWS Incident Manager integration (AWS closed it to new customers on 2025-11-07; OpsCenter is the supported alternative).
