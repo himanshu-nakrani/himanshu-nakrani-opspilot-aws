@@ -145,6 +145,9 @@ def attach_app_delivery(stack: Stack, service_fn: lambda_.Function) -> None:
         stack,
         "AppPipeline",
         pipeline_name=PIPELINE_NAME,
+        # restart_execution_on_update is V1-only; pin the type so CDK stops warning
+        # about the implicit default (behavior identical to before).
+        pipeline_type=codepipeline.PipelineType.V1,
         restart_execution_on_update=True,
     )
     pipeline.add_stage(
