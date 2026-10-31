@@ -228,9 +228,6 @@ def test_scm_defaults_to_codecommit(monkeypatch):
         scm.get_scm_client()
 
 
-from tests.test_fix_agent import sample_inputs  # noqa: E402,F401  (pytest fixture)
-
-
 def test_propose_fix_end_to_end_on_codecommit(cc, sample_inputs):
     """The real fix agent drives CodeCommit: branch + commit + PR, then needs-human."""
     from opspilot.fix import agent

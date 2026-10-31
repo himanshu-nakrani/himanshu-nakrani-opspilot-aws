@@ -1,14 +1,12 @@
 """Bedrock Converse tool definitions and executors for Root Cause Analysis (RCA)."""
 
-import json
 import logging
 import os
 import re
 import subprocess
 from typing import Any, Dict, List, Optional, Tuple
-from pydantic import ValidationError
 
-from opspilot.contracts import ContextBundle, EvidenceItem, RcaResult, SuspectedLocation
+from opspilot.contracts import ContextBundle, RcaResult
 
 logger = logging.getLogger(__name__)
 

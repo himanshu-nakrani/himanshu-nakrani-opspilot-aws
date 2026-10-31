@@ -8,15 +8,14 @@ from foundation models, validating schemas and enforcing AgentCore Policies.
 import json
 import logging
 import os
-import subprocess
 import time
 from typing import Any, Callable, Dict, List, Optional
 
 from strands import tool
 
-from opspilot.contracts import ContextBundle, RcaResult
+from opspilot.contracts import ContextBundle
 from opspilot.agentcore.memory import AgentCoreMemory
-from opspilot.agentcore.policy import AgentCorePolicy, PolicyViolationError
+from opspilot.agentcore.policy import AgentCorePolicy
 from opspilot.knowledge.retrieve import retrieve_knowledge as search_knowledge
 from opspilot.rca.tools import (
     RCA_SCHEMA,
@@ -118,7 +117,7 @@ class AgentCoreGateway:
     def get_tool_specs(self) -> List[Dict[str, Any]]:
         """Return tool specifications in Bedrock Converse / MCP compatible format."""
         specs = []
-        for name, entry in self.registry.items():
+        for entry in self.registry.values():
             specs.append(
                 {
                     "toolSpec": {

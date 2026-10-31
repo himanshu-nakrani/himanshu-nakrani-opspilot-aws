@@ -47,7 +47,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
             <AlertOctagon className="w-4 h-4" aria-hidden="true" />
             {this.props.label ?? 'This view'} failed to render
           </div>
-          <p className="text-xs text-red-200/90 font-mono break-words">{error.message}</p>
+          <p className="text-xs text-red-200/90 font-mono wrap-break-word">{error.message}</p>
           <button
             type="button"
             onClick={this.reset}

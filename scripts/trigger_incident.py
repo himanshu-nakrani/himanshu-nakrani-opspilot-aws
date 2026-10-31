@@ -8,7 +8,6 @@ event within 15 minutes does NOT start a new execution.
 
 import os
 import sys
-import time
 from datetime import datetime, timezone
 import httpx
 from fastapi.testclient import TestClient

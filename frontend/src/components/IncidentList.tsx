@@ -31,10 +31,10 @@ type SortKey = 'newest' | 'confidence';
 const SkeletonRow: React.FC<{ i: number }> = ({ i }) => (
   <li className="flex gap-4 px-4 py-4" aria-hidden="true">
     <div className="flex-1 space-y-2.5">
-      <div className="h-3 w-40 rounded bg-ink-800 motion-safe:animate-pulse" style={{ animationDelay: `${i * 120}ms` }} />
-      <div className="h-3 w-4/5 rounded bg-ink-800/70 motion-safe:animate-pulse" style={{ animationDelay: `${i * 120 + 60}ms` }} />
+      <div className="h-3 w-40 rounded-sm bg-ink-800 motion-safe:animate-pulse" style={{ animationDelay: `${i * 120}ms` }} />
+      <div className="h-3 w-4/5 rounded-sm bg-ink-800/70 motion-safe:animate-pulse" style={{ animationDelay: `${i * 120 + 60}ms` }} />
     </div>
-    <div className="h-3 w-16 rounded bg-ink-800 motion-safe:animate-pulse" />
+    <div className="h-3 w-16 rounded-sm bg-ink-800 motion-safe:animate-pulse" />
   </li>
 );
 
@@ -125,19 +125,19 @@ export const IncidentList: React.FC<IncidentListProps> = ({
             placeholder="Search ID, summary, service"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full h-8 bg-ink-950 border border-ink-700 rounded-md pl-8 pr-9 text-[13px] text-ink-50 placeholder-ink-500 focus:outline-none focus:border-signal-400/70 focus:ring-1 focus:ring-signal-400/40 [&::-webkit-search-cancel-button]:hidden"
+            className="w-full h-8 bg-ink-950 border border-ink-700 rounded-md pl-8 pr-9 text-[13px] text-ink-50 placeholder-ink-500 focus:outline-hidden focus:border-signal-400/70 focus:ring-1 focus:ring-signal-400/40 [&::-webkit-search-cancel-button]:hidden"
           />
           {searchTerm ? (
             <button
               type="button"
               onClick={() => setSearchTerm('')}
               aria-label="Clear search"
-              className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-ink-400 hover:text-ink-50 ${focusRing}`}
+              className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-sm text-ink-400 hover:text-ink-50 ${focusRing}`}
             >
               <X className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           ) : (
-            <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 hidden sm:block px-1.5 rounded border border-ink-700 font-mono text-2xs text-ink-500">
+            <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 hidden sm:block px-1.5 rounded-sm border border-ink-700 font-mono text-2xs text-ink-500">
               /
             </kbd>
           )}
@@ -147,7 +147,7 @@ export const IncidentList: React.FC<IncidentListProps> = ({
           <div
             role="group"
             aria-label="Filter by classification"
-            className="flex gap-0.5 p-0.5 rounded-md border border-ink-800 bg-ink-950 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="flex gap-0.5 p-0.5 rounded-md border border-ink-800 bg-ink-950 overflow-x-auto scrollbar-none [&::-webkit-scrollbar]:hidden"
           >
             {FILTERS.map((f) => {
               const active = filterClass === f.id;
@@ -225,7 +225,7 @@ export const IncidentList: React.FC<IncidentListProps> = ({
       {!isLoading && filtered.length > 0 && (
         <>
           <div
-            className="hidden md:grid grid-cols-[52px_minmax(0,1fr)_164px_116px_52px_76px] gap-4 px-4 py-2 border-b border-ink-800 text-2xs uppercase tracking-[0.1em] text-ink-500 font-medium"
+            className="hidden md:grid grid-cols-[52px_minmax(0,1fr)_164px_116px_52px_76px] gap-4 px-4 py-2 border-b border-ink-800 text-2xs uppercase tracking-widest text-ink-500 font-medium"
             aria-hidden="true"
           >
             <span>Sev</span>
@@ -248,7 +248,7 @@ export const IncidentList: React.FC<IncidentListProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelectIncident(inc)}
-                    className="group relative w-full text-left px-4 py-2.5 grid grid-cols-[auto_minmax(0,1fr)_auto] md:grid-cols-[52px_minmax(0,1fr)_164px_116px_52px_76px] gap-x-4 gap-y-1.5 items-start md:items-center hover:bg-ink-850 transition-colors duration-100 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal-400"
+                    className="group relative w-full text-left px-4 py-2.5 grid grid-cols-[auto_minmax(0,1fr)_auto] md:grid-cols-[52px_minmax(0,1fr)_164px_116px_52px_76px] gap-x-4 gap-y-1.5 items-start md:items-center hover:bg-ink-850 transition-colors duration-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal-400"
                   >
                     {inc.severity === 'sev1' && (
                       <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-red-500" aria-hidden="true" />

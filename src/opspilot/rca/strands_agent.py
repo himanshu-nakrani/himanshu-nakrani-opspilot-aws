@@ -5,7 +5,7 @@ orchestrated by Amazon Bedrock AgentCore Runtime.
 """
 
 import logging
-from typing import Optional, Tuple
+from typing import Optional
 
 from strands import Agent
 

@@ -8,7 +8,6 @@ from opspilot.agentcore import (
     AgentCoreMemory,
     AgentCorePolicy,
     AgentCoreRuntime,
-    AgentCoreSession,
     PolicyViolationError,
 )
 

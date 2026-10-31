@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Pattern, Tuple
 
-from opspilot.contracts import ContextBundle, EvidenceItem, RcaResult, SuspectedLocation
+from opspilot.contracts import ContextBundle, RcaResult
 
 logger = logging.getLogger(__name__)
 

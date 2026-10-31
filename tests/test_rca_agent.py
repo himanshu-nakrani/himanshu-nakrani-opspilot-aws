@@ -1,9 +1,8 @@
 """Unit tests for RCA agent, structured output, grounding, and abstention."""
 
 from unittest.mock import MagicMock
-import pytest
 
-from opspilot.contracts import ContextBundle, IncidentEvent, LogLine, RcaResult
+from opspilot.contracts import ContextBundle, LogLine, RcaResult
 from opspilot.rca.agent import run_rca_agent
 from opspilot.rca.tools import validate_and_ground_rca
 

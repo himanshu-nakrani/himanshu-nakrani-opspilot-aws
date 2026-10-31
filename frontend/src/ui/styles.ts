@@ -1,7 +1,7 @@
 /** Shared class recipes so every control speaks the same visual language. */
 
 export const focusRing =
-  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal-400';
+  'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal-400';
 
 const btnBase =
   'inline-flex items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed';
@@ -14,9 +14,9 @@ export const btn = {
 };
 
 /** Small all-caps label used for section and metric headings. */
-export const eyebrow = 'text-2xs font-medium uppercase tracking-[0.1em] text-ink-400';
+export const eyebrow = 'text-2xs font-medium uppercase tracking-widest text-ink-400';
 
-export const chip = 'inline-flex items-center gap-1 px-1.5 py-px text-2xs font-medium rounded border';
+export const chip = 'inline-flex items-center gap-1 px-1.5 py-px text-2xs font-medium rounded-sm border';
 
 /** Larger status/attribute badge for detail views. Pair with a tone from lib/badges. */
 export const badge = 'inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md border';

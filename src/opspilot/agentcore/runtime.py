@@ -18,7 +18,7 @@ from strands.hooks import BeforeModelCallEvent, HookProvider, HookRegistry
 from strands.models import Model
 from strands.models.bedrock import BedrockModel
 
-from opspilot.contracts import ContextBundle, EvidenceItem, RcaResult, SuspectedLocation
+from opspilot.contracts import ContextBundle, RcaResult
 from opspilot.agentcore.gateway import AgentCoreGateway
 from opspilot.agentcore.memory import AgentCoreMemory
 from opspilot.agentcore.policy import AgentCorePolicy
@@ -142,7 +142,16 @@ class AgentCoreOfflineModel(Model):
         super().__init__()
         self.bundle = bundle
         self.turn = 0
-        self._converter = BedrockModel(model_id="anthropic.claude-3-5-sonnet-20241022-v2:0", region_name="us-east-1")
+        # Only convert_non_streaming_to_streaming is used; the explicit offline session keeps
+        # the constructor from resolving the ambient credential chain (zero-credential promise).
+        self._converter = BedrockModel(
+            model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
+            boto_session=boto3.Session(
+                region_name="us-east-1",
+                aws_access_key_id="offline",
+                aws_secret_access_key="offline",
+            ),
+        )
 
     def update_config(self, **kwargs):
         pass
@@ -376,7 +385,7 @@ class AgentCoreRuntime:
         session.model_name = type(agent.model).__name__
         prompt = build_user_prompt(bundle)
         try:
-            agent_result = agent(prompt)
+            agent(prompt)  # result lands in session.memory.submitted_rca via the submit_rca tool
             duration_ms = session.close()
             _capture_metrics(session, agent)
             logger.info("AgentCore session %s completed in %.1f ms", session.session_id, duration_ms)

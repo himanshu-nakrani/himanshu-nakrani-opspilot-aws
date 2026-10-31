@@ -4,11 +4,8 @@ Generates reproduction test and code fix unified diff, enforces
 patch limits, and manages branch and pull request creation.
 """
 
-import json
 import logging
-import os
 import re
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from opspilot.contracts import PrRef, RcaResult, TicketRef

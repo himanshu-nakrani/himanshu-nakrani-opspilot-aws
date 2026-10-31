@@ -90,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
       : 'Paused';
 
   return (
-    <header className="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/95 supports-[backdrop-filter]:bg-ink-950/85 supports-[backdrop-filter]:backdrop-blur">
+    <header className="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/95 supports-backdrop-filter:bg-ink-950/85 supports-backdrop-filter:backdrop-blur-sm">
       <div className="px-4 sm:px-6 h-14 flex items-center gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
           <Mark />
@@ -98,7 +98,7 @@ export const Header: React.FC<HeaderProps> = ({
             OpsPilot
           </h1>
           <SectionNav page={page} onNavigate={onNavigate} className="hidden sm:flex items-center gap-1 ml-2" />
-          <span className="hidden md:inline px-1.5 py-px rounded border border-ink-800 font-mono text-2xs text-ink-400">
+          <span className="hidden md:inline px-1.5 py-px rounded-sm border border-ink-800 font-mono text-2xs text-ink-400">
             AWS POC
           </span>
         </div>

@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 import pytest
-from opspilot.contracts import EvidenceItem, RcaResult, SuspectedLocation, TicketRef
+from opspilot.contracts import EvidenceItem, SuspectedLocation
 from opspilot.fix.agent import UnsupportedFixTarget, generate_repro_test_and_patch, mark_needs_human_handler, propose_fix, suggested_diff
 from opspilot.fix.git_ops import GitHubError, PatchApplyError, apply_unified_diff
 
@@ -44,25 +44,6 @@ def _assert_patched_create_order_returns_422(patch: str) -> None:
         env["FAULT_DB_TIMEOUT_S"] = "0"
         proc = subprocess.run([sys.executable, script], cwd=tmp, env=env, capture_output=True, text=True)
         assert proc.returncode == 0, proc.stdout + proc.stderr
-
-
-@pytest.fixture
-def sample_inputs():
-    rca = RcaResult(
-        incident_id="inc-fix-001",
-        classification="code_defect",
-        severity="sev2",
-        confidence=0.92,
-        summary="AttributeError on missing order in sample_service/app.py",
-        suspected_location=SuspectedLocation(file="sample_service/app.py", line=29, function="get_order"),
-        evidence=[
-            EvidenceItem(kind="log_line", ref="log-1", claim="Unhandled AttributeError"),
-            EvidenceItem(kind="stack_frame", ref="sample_service/app.py:29", claim="Faulting line"),
-        ],
-        suggested_fix_strategy="Return 404 HTTPException for missing order.",
-    )
-    ticket = TicketRef(key="oi-0a1b2c3d4e5f", url="https://us-east-1.console.aws.amazon.com/systems-manager/opsitems/oi-0a1b2c3d4e5f?region=us-east-1", incident_id="inc-fix-001")
-    return rca, ticket
 
 
 def test_suggested_diff_does_not_touch_the_repo(sample_inputs):
@@ -144,7 +125,7 @@ class FakeGitHub:
     def open_pull_request(self, branch, base, title, body):
         if self.fail_pr:
             raise GitHubError("GitHub create pull request failed: HTTP 403")
-        return 7, f"https://github.com/o/r/pull/7"
+        return 7, "https://github.com/o/r/pull/7"
 
     def add_labels(self, number, labels):
         self.labels.append((number, labels))

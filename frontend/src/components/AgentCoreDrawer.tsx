@@ -47,7 +47,7 @@ export const AgentCoreDrawer: React.FC<AgentCoreDrawerProps> = ({ isOpen, onClos
             <Terminal className="w-3.5 h-3.5 text-fuchsia-400" aria-hidden="true" />
             Strands Agents SDK
           </h3>
-          <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1.5 text-xs font-mono p-3.5 rounded-lg bg-ink-950 border border-ink-800">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs font-mono p-3.5 rounded-lg bg-ink-950 border border-ink-800">
             <dt className="text-ink-400">Installed version</dt>
             <dd className="text-fuchsia-200 text-right">{stats.strands_sdk_version ?? 'not installed'}</dd>
             <dt className="text-ink-400">Model backend</dt>

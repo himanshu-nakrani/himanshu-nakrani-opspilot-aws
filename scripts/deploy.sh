@@ -48,8 +48,10 @@ preflight() {
   command -v "$PY" >/dev/null || die "python3 not found"
   "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' || die "Python 3.10+ required"
   pass "$("$PY" --version)"
-  command -v node >/dev/null || die "Node.js 18+ required for the CDK CLI"
-  node -e 'process.exit(+process.versions.node.split(".")[0] >= 18 ? 0 : 1)' || die "Node.js 18+ required"
+  command -v node >/dev/null || die "Node.js 20.19+/22.12+ required (CDK CLI and the Vite 8 frontend build)"
+  # Vite 8 engines: ^20.19.0 || >=22.12.0 — the dashboard build runs in preflight-adjacent paths.
+  node -e 'const [M, m] = process.versions.node.split(".").map(Number); process.exit(M > 22 || (M === 22 && m >= 12) || (M === 20 && m >= 19) ? 0 : 1)' \
+    || die "Node.js 20.19+/22.12+ required (found $(node --version))"
   pass "node $(node --version)"
   "$PY" -c 'import aws_cdk, constructs, boto3' 2>/dev/null \
     || die "Python deps missing. Run: $PY -m pip install -r requirements.txt  (inside a venv)"

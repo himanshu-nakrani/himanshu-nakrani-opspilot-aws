@@ -1,11 +1,8 @@
 """Tests for AWS Strands Agents SDK integration in OpsPilot."""
 
-import pytest
 from strands import Agent
-from strands.tools.decorator import DecoratedFunctionTool
 
 from opspilot.contracts import ContextBundle, LogLine, RcaResult
-from opspilot.agentcore import AgentCoreRuntime
 from opspilot.rca.strands_agent import create_strands_rca_agent, run_strands_rca
 
 

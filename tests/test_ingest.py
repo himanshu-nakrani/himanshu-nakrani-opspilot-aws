@@ -3,7 +3,6 @@
 from datetime import datetime, timezone
 import json
 import boto3
-import pytest
 from moto import mock_aws
 
 from opspilot.ingest import compute_incident_id, handle_alarm_event, record_incident_if_new

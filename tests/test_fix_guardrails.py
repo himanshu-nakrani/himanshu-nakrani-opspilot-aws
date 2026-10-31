@@ -3,7 +3,6 @@
 import pytest
 from opspilot.fix.guardrails import (
     PatchRejectedException,
-    parse_unified_diff,
     validate_patch_limits,
 )
 

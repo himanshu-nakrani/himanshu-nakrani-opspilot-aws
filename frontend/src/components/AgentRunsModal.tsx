@@ -51,7 +51,7 @@ export const AgentRunsModal: React.FC<AgentRunsModalProps> = ({ isOpen, onClose 
           <button
             type="button"
             onClick={() => setSelected(null)}
-            className={`inline-flex items-center gap-1.5 text-xs text-ink-300 hover:text-ink-50 rounded ${focusRing}`}
+            className={`inline-flex items-center gap-1.5 text-xs text-ink-300 hover:text-ink-50 rounded-sm ${focusRing}`}
           >
             <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" /> All runs
           </button>
@@ -75,7 +75,7 @@ export const AgentRunsModal: React.FC<AgentRunsModalProps> = ({ isOpen, onClose 
           <p className="text-2xs text-ink-400">Select a run to open its trace.</p>
           <div className="rounded-lg border border-ink-800 overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="bg-ink-950/60 text-2xs uppercase tracking-[0.1em] text-ink-400">
+              <thead className="bg-ink-950/60 text-2xs uppercase tracking-widest text-ink-400">
                 <tr>
                   <th scope="col" className="text-left font-medium px-3 py-2">Incident</th>
                   <th scope="col" className="text-left font-medium px-3 py-2">Status</th>
@@ -100,7 +100,7 @@ export const AgentRunsModal: React.FC<AgentRunsModalProps> = ({ isOpen, onClose 
                           e.stopPropagation();
                           setSelected(run);
                         }}
-                        className={`font-mono text-ink-50 hover:underline underline-offset-2 rounded ${focusRing}`}
+                        className={`font-mono text-ink-50 hover:underline underline-offset-2 rounded-sm ${focusRing}`}
                       >
                         {run.incident_id}
                       </button>
