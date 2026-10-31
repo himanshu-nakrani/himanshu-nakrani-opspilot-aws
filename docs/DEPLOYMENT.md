@@ -19,7 +19,7 @@ Copy `.env.deploy.example` to `.env.deploy`; `deploy.sh` sources it automaticall
 | `CODECOMMIT_REPO_EXISTS` | `0` | Export `1` to make CoreStack *import* the repo instead of owning it (importing detaches it from the stack) |
 | `BEDROCK_MODEL_ID` | `us.moonshotai.kimi-k3` | RCA model; IAM is scoped to this model's ARN (+ inference profile) |
 | `KNOWLEDGE_BASE_ID` | *(blank)* | Managed Bedrock Knowledge Base for merged-PR solutions. Blank = documents land in S3 only, no sync, no `retrieve_knowledge` results |
-| `KNOWLEDGE_BUCKET` | CoreStack output `KnowledgeBucketName` | Source bucket for the knowledge base connector |
+| `KNOWLEDGE_BUCKET` | `seed-knowledge` falls back to the CoreStack output `KnowledgeBucketName`; **the dashboard has no fallback** | Source bucket for the knowledge base connector. `deploy.sh dashboard` does not fill this from stack outputs — export `KNOWLEDGE_BUCKET=<KnowledgeBucketName>` in the dashboard environment or merged-PR ingestion fails with "Knowledge bucket is not configured" |
 | `SLACK_WEBHOOK_URL` | *(blank)* | Written to Secrets Manager `opspilot/slack` after deploy; blank skips (SNS still notifies) |
 
 Deploy-script knobs: `OFFLINE=1` (synth without AWS credentials, fake account), `RESEED=1` (re-push the checkout over an existing `main`), `YES=1` (skip the destroy confirmation), `REBUILD_FRONTEND=1` (force `npm ci && npm run build` in `dashboard`), `PORT` (dashboard port, default 8000), `PYTHON` (interpreter, default `python3`).

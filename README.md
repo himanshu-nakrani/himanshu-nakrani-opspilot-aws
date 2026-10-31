@@ -108,11 +108,11 @@ Details and the full data-flow diagrams: [docs/ARCHITECTURE.md](docs/ARCHITECTUR
 
 ```bash
 make test               # pytest, fake AWS credentials, no network
-make eval               # replay the 10 fixtures through the offline model
+make eval               # replay the 10 fixtures (offline model unless real AWS creds are exported)
 make trigger-incident   # local M1 dedup demo (in-process, moto)
 ```
 
-Everything runs offline by default (`OPSPILOT_MODE=replay`); deployed Lambdas get `OPSPILOT_MODE=live`, where every external write either succeeds and is recorded or raises so Step Functions can route the failure. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Local runs default to `OPSPILOT_MODE=replay`; deployed Lambdas get `live`, where every external write either succeeds and is recorded or raises so Step Functions can route the failure. Replay only changes what a *failed* write does (log instead of raise) — it does not by itself make a run offline. The RCA agent picks the deterministic offline model by **credentials**: a real `AWS_ACCESS_KEY_ID` (or `OPSPILOT_LIVE=1`) selects live Bedrock instead, so force offline evals with `env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY make eval`. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Deliberately out of scope
 

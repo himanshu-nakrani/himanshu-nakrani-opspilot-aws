@@ -67,7 +67,7 @@ cd frontend && npm test && npm run typecheck   # vitest + tsc
 
 | Knob | Values | Meaning |
 |---|---|---|
-| `OPSPILOT_MODE` | `replay` (default) / `live` | Live: real AWS writes; any failure **raises** so Step Functions routes it (audit, ticketing, notify). Replay: failures only log. CDK sets `live` on every Lambda. Mode is never inferred from credentials. |
+| `OPSPILOT_MODE` | `replay` (default) / `live` | Controls **failure handling of AWS writes only** — it does not make a run offline. Replay still attempts the same DynamoDB/OpsCenter/Slack calls when credentials exist; a failed write just logs instead of **raising** (live) so Step Functions can route it. CDK sets `live` on every Lambda. Mode is never inferred from credentials. |
 | `OPSPILOT_LIVE=1` or a real `AWS_ACCESS_KEY_ID` | — | Selects the live `BedrockModel` in the Strands runtime; otherwise `AgentCoreOfflineModel` (deterministic, grounding-aware, zero credentials) |
 | `OPSPILOT_AGENT_BACKEND` | unset / `converse` | Default runs the Strands agent loop; `converse` runs the plain Bedrock Converse loop in `rca/agent.py`. An explicitly injected `bedrock_client` (unit tests) always uses the Converse loop. Without live AWS, the Converse path falls back to the offline keyword heuristic (capped below the PR threshold). |
 | `BEDROCK_MODEL_ID` | default `us.moonshotai.kimi-k3` | Kimi K3 rejects `temperature` and replayed reasoning blocks; `agentcore/runtime.py` strips both. |
@@ -108,7 +108,7 @@ Useful dashboard env: `PORT` (8000), `SAMPLE_SERVICE_URL` (else read from stack 
 
 ## Evals (M6)
 
-`evals/run_evals.py` replays all fixtures in `evals/fixtures/` through `run_rca_agent` (offline model) + `route_rca` and reports classification accuracy, router accuracy, location hit rate (file match ± 2 lines), abstention precision, evidence-ref validity, mean tokens (chars/4 estimate) and latency. Pass targets: classification ≥ 90%, location ≥ 90%, abstention = 100%, evidence validity ≥ 95%. **These scores validate the plumbing, not model quality** — there is no live-model eval mode yet. Fixtures: sample missing order, missing env var, config typo, downstream payment timeout, noise-only logs, DB pool exhaustion, OOM kill, auth-provider 503, unhandled KeyError payload, truncated/incomplete logs.
+`evals/run_evals.py` replays all fixtures in `evals/fixtures/` through `run_rca_agent` + `route_rca` and reports classification accuracy, router accuracy, location hit rate (file match ± 2 lines), abstention precision, evidence-ref validity, mean tokens (chars/4 estimate) and latency. The offline model is selected by **credentials, not by `OPSPILOT_MODE`**: with a real `AWS_ACCESS_KEY_ID` exported (or `OPSPILOT_LIVE=1`), the runtime picks the live `BedrockModel` and calls Bedrock instead. Force offline with `env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY make eval` (or `AWS_ACCESS_KEY_ID=testing`). Pass targets: classification ≥ 90%, location ≥ 90%, abstention = 100%, evidence validity ≥ 95%. **These scores validate the plumbing, not model quality** — there is no live-model eval mode yet. Fixtures: sample missing order, missing env var, config typo, downstream payment timeout, noise-only logs, DB pool exhaustion, OOM kill, auth-provider 503, unhandled KeyError payload, truncated/incomplete logs.
 
 ## Adding a planted fault / scenario
 
