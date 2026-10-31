@@ -16,7 +16,7 @@ bash scripts/deploy.sh                  # or: make deploy
 
 | Step | What it does |
 |---|---|
-| preflight | Python 3.10+, Node 20.19+ (or 22.12+), CDK libs, pip/uv; reads account and region from STS; validates `CODECOMMIT_REPO` (owned, or imported when `CODECOMMIT_REPO_EXISTS=1`); checks OpsCenter reachability and warns if the Bedrock model is not enabled |
+| preflight | Python 3.10+, Node 22.22.2+ (or 24.15+/26+), CDK libs, pip/uv; reads account and region from STS; validates `CODECOMMIT_REPO` (owned, or imported when `CODECOMMIT_REPO_EXISTS=1`); checks OpsCenter reachability and warns if the Bedrock model is not enabled |
 | bootstrap | `cdk bootstrap` only if the CDKToolkit stack is missing |
 | synth | Bundles every Lambda for Linux/cp312 (no Docker) and writes `cdk.out/` |
 | deploy | `cdk deploy --all`; stack outputs go to `cdk-outputs.json` |
