@@ -20,7 +20,7 @@ This is a proof-of-concept. It targets **one** deliberately broken sample servic
 
 ## Deploy
 
-One command deploys the three stacks (core, sample service with planted faults, pipeline), seeds both CodeCommit repos and the optional knowledge base, writes secrets, and smoke-checks the result. Needs Python 3.10+, Node 20.19+ (or 22.12+), and AWS credentials — no Docker, no AWS CLI.
+One command deploys the three stacks (core, sample service with planted faults, pipeline), seeds both CodeCommit repos and the optional knowledge base, writes secrets, and smoke-checks the result. Needs Python 3.10+, Node 22.22.2+ (or 24.15+/26+), and AWS credentials — no Docker, no AWS CLI.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt

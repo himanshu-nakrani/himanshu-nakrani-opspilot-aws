@@ -4,7 +4,7 @@ Everything deploys with `scripts/deploy.sh` (boto3 + `npx aws-cdk@2`). **No Dock
 
 ## Prerequisites
 
-- Python 3.10+ (3.12 recommended — Lambdas run `PYTHON_3_12`), Node.js 20.19+/22.12+ (CDK CLI and the Vite 8 frontend build), pip or uv (Lambda bundling).
+- Python 3.10+ (3.12 recommended — Lambdas run `PYTHON_3_12`), Node.js 22.22.2+/24.15+/26+ (CDK CLI, Vite 8 frontend build, Vitest 5 tests), pip or uv (Lambda bundling).
 - `pip install -r requirements.txt` inside a venv (`aws-cdk-lib`, `constructs`, `boto3` must import).
 - AWS credentials via the normal chain (`AWS_PROFILE`, SSO, or access keys). Bedrock model access for `BEDROCK_MODEL_ID` in the target region (preflight warns if the model is not enabled).
 
